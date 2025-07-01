@@ -83,3 +83,5 @@ marker_icon.png
 ## License
 
 This project is intended for internal, non-commercial use. See LICENSE file if provided.
+
+<a href="https://www.flaticon.com/free-icons/forensics" title="forensics icons">Forensics icons created by Iconjam - Flaticon</a>
