@@ -31,6 +31,8 @@ A digital forensics case log and reporting tool for labs and agencies, built wit
 - [reportlab](https://www.reportlab.com/)
 - [geopy](https://geopy.readthedocs.io/)
 
+Download exe from Releases (no setup) or...
+
 Install dependencies with:
 
 ```
@@ -83,3 +85,5 @@ marker_icon.png
 ## License
 
 This project is intended for internal, non-commercial use. See LICENSE file if provided.
+
+<a href="https://www.flaticon.com/free-icons/forensics" title="forensics icons">Forensics icons created by Iconjam - Flaticon</a>
