@@ -1663,6 +1663,11 @@ class CaseLogApp:
         self.notebook = tb.Notebook(self.root)
         self.notebook.grid(row=0, column=0, sticky='nsew', padx=10, pady=10)
 
+        # Progress bar for long operations (initially hidden) - placed in main window
+        self.progress = ttk.Progressbar(self.root, orient="horizontal", mode="indeterminate")
+        self.progress.grid(row=2, column=0, sticky='ew', padx=10, pady=(0,5))
+        self.progress.grid_remove()  # Hide initially
+
         # Tabs (Dashboard removed)
         self.entry_frame = tb.Frame(self.notebook, padding="10")
         self.view_frame = tb.Frame(self.notebook, padding="10")
@@ -1936,6 +1941,9 @@ class CaseLogApp:
 
         # Configure Accent button style (defined here as used in this tab)
         self.style.configure("Accent.TButton", font=("-weight", "bold"))
+        
+        # Configure Danger button style (for delete buttons)
+        self.style.configure("Danger.TButton", foreground="red", font=("-weight", "bold"))
 
 
         # After all widgets are created in create_entry_widgets
@@ -2223,14 +2231,6 @@ class CaseLogApp:
     def focus_prev_widget(self, event):
         event.widget.tk_focusPrev().focus()
         return "break"
-
-        # Configure Danger button style (defined here as used in this tab)
-        self.style.configure("Danger.TButton", foreground="red", font=("-weight", "bold"))
-
-        self.progress = ttk.Progressbar(container, orient="horizontal", mode="indeterminate")
-        self.progress.grid(row=3, column=0, sticky='ew', padx=5, pady=(0,5))
-        self.progress.grid_remove()  # Hide initially
-
 
     def create_map_widgets(self):
         """Creates the widgets for the Map View tab, including map view selection."""
@@ -3400,7 +3400,7 @@ class CaseLogApp:
 
         try:
             self.update_status("Importing cases from XLSX...")
-            self.progress.pack(fill='x', padx=5, pady=(0,5))  # Show progress bar
+            self.progress.grid()  # Show progress bar using grid
             self.progress.start(10)  # Start progress animation
             
             # Read the Excel file
@@ -3484,7 +3484,7 @@ class CaseLogApp:
             )
         finally:
             self.progress.stop()  # Stop progress animation
-            self.progress.pack_forget()  # Hide progress bar
+            self.progress.grid_remove()  # Hide progress bar
             self.update_status(f"Import complete. {imported_count} imported, {skipped_count} skipped.")
 
     def show_application_log(self):
