@@ -1,0 +1,7 @@
+tkinter
+matplotlib
+ttkbootstrap
+tkintermapview
+geopy
+openpyxl
+reportlab
