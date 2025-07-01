@@ -1,0 +1,56 @@
+# CyberLabCaseTracker .gitignore
+# Exclude sensitive/user data, database, logs, and app-specific files
+
+# SQLite database
+caselog_gui_v6.db
+*.db
+
+# User/app data directory
+app_data/
+data/
+
+# Log files
+*.log
+
+# Python cache and environment
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv
+venv/
+ENV/
+
+# Jupyter/IPython
+.ipynb_checkpoints/
+
+# VSCode settings
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Backup files
+*.bak
+*.tmp
+~$*
+
+# Exported reports
+*.pdf
+*.xlsx
+
+# Images and icons (user-uploaded)
+logo.png
+marker_icon.png
+
+# Misc
+*.swp
+*.swo
+
+# Ignore all except source code and documentation
+!*.py
+!*.md
+!requirements.txt
+!README*
