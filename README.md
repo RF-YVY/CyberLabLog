@@ -15,6 +15,18 @@ A digital forensics case log and reporting tool for labs and agencies, built wit
 - **Security:** Password-protected data deletion and settings.
 - **About Tab:** Comprehensive app info and clickable developer GitHub link.
 
+![Image](https://github.com/user-attachments/assets/a2e67522-42d9-4975-9d7a-85f0b579b4ec)
+
+![Image](https://github.com/user-attachments/assets/928c3bde-f2b6-4aff-8ec2-977e5679d290)
+
+![Image](https://github.com/user-attachments/assets/538a85f3-8eef-4fa0-a420-418cf6b599f4)
+
+![Image](https://github.com/user-attachments/assets/b9b63681-cca2-44e3-b646-079ab1104ca5)
+
+![Image](https://github.com/user-attachments/assets/aead7596-9ebc-4ecf-9814-4b515b32b131)
+
+![Image](https://github.com/user-attachments/assets/6c4fe01a-a5cc-4e17-afb9-55cedafef894)
+
 ## XLSX Import Format
 
 When importing cases from an Excel file, the following column headers are **required** (case-sensitive):
