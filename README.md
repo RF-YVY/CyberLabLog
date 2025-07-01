@@ -62,9 +62,9 @@ When importing cases from an Excel file, the following column headers are **requ
 - [reportlab](https://www.reportlab.com/)
 - [geopy](https://geopy.readthedocs.io/)
 
-Download exe from Releases (no setup) or...
+# Download exe from Releases (no setup) or...
 
-Install dependencies with:
+## Install dependencies with:
 
 ```
 pip install ttkbootstrap tkintermapview matplotlib openpyxl reportlab geopy
