@@ -15,6 +15,37 @@ A digital forensics case log and reporting tool for labs and agencies, built wit
 - **Security:** Password-protected data deletion and settings.
 - **About Tab:** Comprehensive app info and clickable developer GitHub link.
 
+## XLSX Import Format
+
+When importing cases from an Excel file, the following column headers are **required** (case-sensitive):
+
+| Column Header | Description | Format/Type |
+|---------------|-------------|-------------|
+| `ID` | Unique identifier | Optional, can be empty |
+| `Case #` | Case number or identifier | Text |
+| `Examiner` | Name of the examiner | Text |
+| `Investigator` | Name of the investigator | Text |
+| `Agency` | Agency or organization name | Text |
+| `City` | City where offense occurred | Text |
+| `State` | State where offense occurred | Text |
+| `Start (MM-DD-YYYY)` | Case start date | MM-DD-YYYY format |
+| `End (MM-DD-YYYY)` | Case end date | MM-DD-YYYY format |
+| `Vol (GB)` | Volume size in gigabytes | Numeric |
+| `Offense` | Type of offense or crime | Text |
+| `Device` | Type of device examined | Text |
+| `Model` | Device model | Text |
+| `OS` | Operating system | Text |
+| `Recovered?` | Data recovery status | Yes/No |
+| `FPR?` | Full Physical Recovery status | Yes/No |
+| `Notes` | Additional notes or comments | Text |
+| `Created (YYYY-MM-DD)` | Creation date | YYYY-MM-DD format |
+
+**Important Notes:**
+- All column headers must match exactly (case-sensitive)
+- Missing any required column will cause the import to fail
+- Date formats must be exactly as specified
+- Boolean fields (Recovered?, FPR?) should contain "Yes" or "No"
+
 ## Data Storage
 
 - All case data is stored locally in an encrypted SQLite database (`caselog_gui_v6.db`).
