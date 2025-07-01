@@ -31,6 +31,8 @@ A digital forensics case log and reporting tool for labs and agencies, built wit
 - [reportlab](https://www.reportlab.com/)
 - [geopy](https://geopy.readthedocs.io/)
 
+Download exe from Releases (no setup) or...
+
 Install dependencies with:
 
 ```
