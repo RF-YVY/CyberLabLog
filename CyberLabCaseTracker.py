@@ -632,6 +632,10 @@ class CaseLogApp:
 
     def refresh_data_view(self, filter_text=None, reset_lazy=True):
         """Refresh the Treeview with lazy loading support."""
+        # If no filter_text provided, try to use existing filter
+        if filter_text is None:
+            filter_text = getattr(self, '_view_filter_string', '') if hasattr(self, '_view_filter_string') else ''
+        
         if reset_lazy:
             self.init_lazy_loading()
             self._lazy_filter = filter_text
@@ -1238,48 +1242,6 @@ class CaseLogApp:
             self.update_status("Redo: Edit re-applied.")
         else:
             self.update_status("Redo failed: No valid data.")
-    # --- Undo/Redo for View Data Tab ---
-    def init_view_edit_history(self):
-        """Initializes the undo/redo stacks for View Data editing."""
-        self._view_edit_undo_stack = []
-        self._view_edit_redo_stack = []
-
-    def push_view_edit_history(self, prev_data, new_data):
-        """Pushes a change to the undo stack and clears the redo stack."""
-        self._view_edit_undo_stack.append((prev_data, new_data))
-        self._view_edit_redo_stack.clear()
-
-    def undo_view_edit(self):
-        """Undo the last edit in the View Data tab."""
-        if not hasattr(self, '_view_edit_undo_stack') or not self._view_edit_undo_stack:
-            Messagebox.show_info("Undo", "Nothing to undo.")
-            return
-        prev_data, new_data = self._view_edit_undo_stack.pop()
-        # Save for redo
-        self._view_edit_redo_stack.append((prev_data, new_data))
-        # Restore previous data
-        if prev_data and 'id' in prev_data:
-            update_case_db(prev_data['id'], prev_data)
-            self.refresh_data_view()
-            Messagebox.show_info("Undo", "Last edit undone.")
-        else:
-            Messagebox.show_error("Undo Error", "No previous data to restore.")
-
-    def redo_view_edit(self):
-        """Redo the last undone edit in the View Data tab."""
-        if not hasattr(self, '_view_edit_redo_stack') or not self._view_edit_redo_stack:
-            Messagebox.show_info("Redo", "Nothing to redo.")
-            return
-        prev_data, new_data = self._view_edit_redo_stack.pop()
-        # Save for undo
-        self._view_edit_undo_stack.append((prev_data, new_data))
-        # Re-apply new data
-        if new_data and 'id' in new_data:
-            update_case_db(new_data['id'], new_data)
-            self.refresh_data_view()
-            Messagebox.show_info("Redo", "Last undone edit reapplied.")
-        else:
-            Messagebox.show_error("Redo Error", "No new data to reapply.")
 
     def load_map_markers(self):
         """Load map markers for each unique city/state in the case log, showing offenses on click. Async geocoding for uncached locations."""
@@ -2712,69 +2674,6 @@ class CaseLogApp:
 
     # --- Data Handling and UI Refresh ---
 
-    def refresh_data_view(self):
-        """Clears and re-populates the Treeview with data from the database, applying any search/filter if set."""
-        self.update_status("Refreshing data...")
-        self.root.update_idletasks()
-
-        # Clear existing items in the treeview
-        try:
-            for item in self.tree.get_children():
-                self.tree.delete(item)
-        except Exception as e:
-            logging.error(f"Error clearing treeview items: {e}")
-
-        # Fetch all cases
-        try:
-            cases = get_all_cases_db()
-        except Exception as e:
-            logging.error(f"Error fetching cases from database: {e}")
-            cases = []
-            self.update_status("Error fetching data.")
-
-        # Apply filter if set
-        filter_str = getattr(self, '_view_filter_string', '').strip().lower() if hasattr(self, '_view_filter_string') else ''
-        if filter_str:
-            def case_matches(case):
-                for value in case.values():
-                    if value is None:
-                        continue
-                    if isinstance(value, (str, int, float)) and filter_str in str(value).lower():
-                        return True
-                return False
-            filtered_cases = [case for case in cases if case_matches(case)]
-        else:
-            filtered_cases = cases
-
-
-        # Get the keys in the order they are defined in tree_columns_config, including 'id'
-        column_keys_ordered = list(self.tree_columns_config.keys())
-
-        try:
-            for index, case in enumerate(filtered_cases):
-                values = tuple(
-                    format_date_str_for_display(case.get(col_key)) if col_key in ['start_date', 'end_date', 'created_at']
-                    else format_bool_int(case.get(col_key)) if col_key == "fpr_complete"
-                    else str(case.get(col_key, '')) if col_key == "volume_size_gb" and case.get(col_key) is not None
-                    else case.get(col_key, '')
-                    for col_key in column_keys_ordered
-                )
-                self.tree.insert('', 'end', values=values)
-        except Exception as e:
-            logging.error(f"Error inserting cases into treeview: {e}")
-            self.update_status("Error populating view.")
-
-        # Check if a sort was active and re-apply it after refresh
-        try:
-            if self.treeview_sort_column:
-                self.sort_treeview_column(self.treeview_sort_column, redraw_only=True)
-        except Exception as e:
-            logging.error(f"Error during treeview sorting or header update: {e}")
-
-        self.update_status(f"Data refreshed. {len(filtered_cases)} cases loaded.")
-        logging.info("Data refresh for Treeview complete.")
-
-
     def submit_case(self):
         """Collects data from the entry form and either adds a new case or updates an existing one."""
         case_data = self.collect_form_data(for_validation=True) # Use helper to collect and strip/format
@@ -2814,7 +2713,7 @@ class CaseLogApp:
             # --- Undo/Redo support: Save old data before update ---
             old_case = get_case_by_id_db(case_id_to_update)
             if update_case_db(case_id_to_update, case_data):
-                self.push_view_edit_history(case_id_to_update, old_case, case_data)
+                self.push_view_edit_history(old_case, case_data)
                 Messagebox.show_info("Success", f"Case ID {case_id_to_update} updated successfully.")
                 logging.info(f"Case ID {case_id_to_update} updated.")
                 self.clear_entry_form() # Clear form and reset editing state
@@ -2885,8 +2784,16 @@ class CaseLogApp:
                 value = widget.get("1.0", "end-1c").strip() if for_validation else widget.get("1.0", "end-1c")
                 case_data[key] = value
             elif isinstance(widget, DateEntry): # DateEntry widget
-                date_obj = widget.get_date()
-                case_data[key] = date_obj.strftime('%Y-%m-%d') if date_obj else None
+                date_str = widget.entry.get()
+                if date_str:
+                    try:
+                        # Parse using the widget's dateformat (should be %m-%d-%Y)
+                        date_obj = datetime.strptime(date_str, '%m-%d-%Y').date()
+                        case_data[key] = date_obj.strftime('%Y-%m-%d')
+                    except ValueError:
+                        case_data[key] = None
+                else:
+                    case_data[key] = None
             elif isinstance(widget, tk.StringVar) and key in ["start_date", "end_date"]:
                 value = widget.get().strip()
                 if value:
