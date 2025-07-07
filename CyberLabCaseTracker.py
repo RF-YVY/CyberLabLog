@@ -998,7 +998,9 @@ class CaseLogApp:
             elif key == 'fpr_complete':
                 val = format_bool_int(val)
             elif key == 'data_recovered':
-                val = format_bool_int(val)
+                # data_recovered is already stored as "Yes"/"No" strings, not 0/1 integers
+                # Just use the value as-is, or show empty string if None/empty
+                val = val if val else ""
             data.append([label, val])
         table = Table(data, colWidths=[2.5*inch, 4.5*inch])
         table.setStyle(TableStyle([
@@ -1082,9 +1084,10 @@ class CaseLogApp:
         """Export custom report as PDF with improved formatting and word wrapping."""
         from tkinter import filedialog
         from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
-        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         from reportlab.lib.pagesizes import letter, landscape
         from reportlab.lib import colors
+        from reportlab.lib.enums import TA_LEFT
         from datetime import datetime
         
         # Prompt for header info if not set
@@ -1103,57 +1106,131 @@ class CaseLogApp:
 
         try:
             # Determine optimal page orientation based on content
-            avg_cell_width = sum(len(str(cell)) for row in rows for cell in row) / (len(rows) * len(headers)) if rows else 0
             num_cols = len(headers)
             
-            # Use portrait for fewer columns or shorter content, landscape for more columns
-            use_landscape = num_cols > 8 or avg_cell_width > 15
+            # Use landscape for more than 6 columns, portrait otherwise
+            use_landscape = num_cols > 6
             pagesize = landscape(letter) if use_landscape else letter
             
-            doc = SimpleDocTemplate(filename, pagesize=pagesize)
-            style = getSampleStyleSheet()["Normal"]
+            doc = SimpleDocTemplate(
+                filename, 
+                pagesize=pagesize,
+                rightMargin=15,
+                leftMargin=15,
+                topMargin=25,
+                bottomMargin=25
+            )
             
-            # Calculate column widths dynamically
-            page_width = pagesize[0] - 60  # Account for margins
+            styles = getSampleStyleSheet()
             
-            # Calculate relative column widths based on content
-            col_widths = []
+            # Create a custom style for table cells with better wrapping
+            cell_style = ParagraphStyle(
+                'CellStyle',
+                parent=styles['Normal'],
+                fontSize=7,
+                leading=8,
+                leftIndent=0,
+                rightIndent=0,
+                spaceAfter=0,
+                spaceBefore=0,
+                alignment=TA_LEFT,
+                wordWrap='LTR'
+            )
+            
+            # Calculate column widths dynamically based on content
+            page_width = pagesize[0] - 30  # Account for margins
+            
+            # Calculate column width preferences based on content analysis
+            col_weights = []
             for i, header in enumerate(headers):
-                # Get max content length for this column
-                max_content_len = len(header)
+                # Analyze content to determine optimal width
+                header_len = len(str(header))
+                max_content_len = header_len
+                
                 for row in rows:
                     if i < len(row):
-                        max_content_len = max(max_content_len, len(str(row[i])))
+                        content_len = len(str(row[i]))
+                        max_content_len = max(max_content_len, content_len)
                 
+                # Weight based on content length, with min/max limits
+                weight = max(0.5, min(3.0, max_content_len / 10))
+                col_weights.append(weight)
+            
+            # Calculate actual column widths
+            total_weight = sum(col_weights)
+            col_widths = []
+            for weight in col_weights:
+                width = (weight / total_weight) * page_width
                 # Set minimum and maximum widths
-                min_width = 0.8 * inch
+                min_width = 0.4 * inch
                 max_width = 2.5 * inch
-                content_width = max_content_len * 6  # Approximate pixels per character
-                col_widths.append(max(min_width, min(max_width, content_width)))
+                col_widths.append(max(min_width, min(width, max_width)))
             
-            # Normalize column widths to fit page
-            total_width = sum(col_widths)
-            if total_width > page_width:
-                scale_factor = page_width / total_width
-                col_widths = [w * scale_factor for w in col_widths]
+            # Convert all table data to Paragraphs for proper word wrapping
+            table_data = []
             
-            data = [headers] + rows
-            table = Table(data, colWidths=col_widths, repeatRows=1)
+            # Process headers
+            header_row = []
+            for header in headers:
+                header_row.append(Paragraph(str(header), cell_style))
+            table_data.append(header_row)
             
+            # Process data rows
+            for row in rows:
+                data_row = []
+                for cell in row:
+                    # Convert all cell content to strings and wrap in Paragraphs
+                    cell_content = str(cell) if cell is not None else ""
+                    data_row.append(Paragraph(cell_content, cell_style))
+                table_data.append(data_row)
+            
+            # Create table with improved settings
+            table = Table(
+                table_data, 
+                colWidths=col_widths, 
+                repeatRows=1,
+                splitByRow=True
+            )
+            
+            # Apply improved styling
             table.setStyle(TableStyle([
-                ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
-                ("TEXTCOLOR", (0,0), (-1,0), colors.black),
-                ("ALIGN", (0,0), (-1,-1), "LEFT"),
+                # Header styling - red background with white text
+                ("BACKGROUND", (0,0), (-1,0), colors.red),
+                ("TEXTCOLOR", (0,0), (-1,0), colors.white),
                 ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
-                ("FONTSIZE", (0,0), (-1,-1), 9),
-                ("BOTTOMPADDING", (0,0), (-1,0), 8),
-                ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
-                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-                ('LEFTPADDING', (0, 0), (-1, -1), 6),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-                ('TOPPADDING', (0, 0), (-1, -1), 6),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ("FONTSIZE", (0,0), (-1,0), 8),
+                ("ALIGN", (0,0), (-1,0), "CENTER"),
+                ("VALIGN", (0,0), (-1,0), "MIDDLE"),
+                
+                # Data row styling
+                ("BACKGROUND", (0,1), (-1,-1), colors.white),
+                ("TEXTCOLOR", (0,1), (-1,-1), colors.black),
+                ("FONTNAME", (0,1), (-1,-1), "Helvetica"),
+                ("FONTSIZE", (0,1), (-1,-1), 7),
+                ("ALIGN", (0,1), (-1,-1), "LEFT"),
+                ("VALIGN", (0,1), (-1,-1), "TOP"),
+                
+                # Grid and borders
+                ("GRID", (0,0), (-1,-1), 0.5, colors.black),
+                ("LINEBELOW", (0,0), (-1,0), 1, colors.red),
+                
+                # Padding for better spacing
+                ("LEFTPADDING", (0,0), (-1,-1), 3),
+                ("RIGHTPADDING", (0,0), (-1,-1), 3),
+                ("TOPPADDING", (0,0), (-1,-1), 3),
+                ("BOTTOMPADDING", (0,0), (-1,-1), 6),
+                
+                # Word wrapping
+                ("WORDWRAP", (0,0), (-1,-1), True),
+                ("SPLITLONGWORDS", (0,0), (-1,-1), True),
             ]))
+            
+            # Add alternating row colors for better readability
+            for i in range(1, len(table_data)):
+                if i % 2 == 0:
+                    table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, i), (-1, i), colors.Color(0.95, 0.95, 0.95)),
+                    ]))
             
             elements = []
             
@@ -1166,7 +1243,7 @@ class CaseLogApp:
                 f"Division: {header_info.get('Division','')}",
                 f"Date: {now_str}"
             ]
-            header_table = Table([[Paragraph(line, style)] for line in header_lines], hAlign='RIGHT')
+            header_table = Table([[Paragraph(line, styles["Normal"])] for line in header_lines], hAlign='RIGHT')
             elements.append(header_table)
             elements.append(Spacer(1, 12))
             
@@ -2920,50 +2997,91 @@ class CaseLogApp:
             # Get all cases
             cases = get_all_cases_db()
             
-            # Prepare table data
+            # For PDF reports, include ALL columns except 'id' (regardless of treeview visibility)
+            # This ensures that important fields like 'data_recovered' are always included
             headers = [
                 config["text"] for key, config in self.tree_columns_config.items()
-                if config.get("visible", True) and key not in ['id']
+                if key != 'id'  # Only exclude 'id', include everything else
             ]
+            
+            # Get the keys for column mapping
+            visible_keys = [
+                key for key, config in self.tree_columns_config.items()
+                if key != 'id'  # Only exclude 'id', include everything else
+            ]
+            
+            
+            # Process data with proper formatting and word wrapping
+            from reportlab.platypus import Paragraph
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.enums import TA_LEFT
+            
+            styles = getSampleStyleSheet()
+            # Create a custom style for table cells with smaller font and better wrapping
+            cell_style = ParagraphStyle(
+                'CellStyle',
+                parent=styles['Normal'],
+                fontSize=7,
+                leading=8,
+                leftIndent=0,
+                rightIndent=0,
+                spaceAfter=0,
+                spaceBefore=0,
+                alignment=TA_LEFT,
+                wordWrap='LTR'
+            )
             
             data = []
             for case in cases:
                 row = []
-                for key, config in self.tree_columns_config.items():
-                    if config.get("visible", True) and key != 'id':
-                        value = case.get(key, '')
-                        if key in ['start_date', 'end_date', 'created_at']:
-                            value = format_date_str_for_display(value)
-                        elif key == 'fpr_complete':
-                            value = format_bool_int(value)
-                        elif key == 'data_recovered':
-                            # data_recovered is stored as "Yes", "No", or "" - just display as is
-                            value = value if value else ""
-                        row.append(str(value))
+                for key in visible_keys:
+                    value = case.get(key, '')
+                    
+                    # Format specific field types
+                    if key in ['start_date', 'end_date', 'created_at']:
+                        value = format_date_str_for_display(value)
+                    elif key == 'fpr_complete':
+                        value = format_bool_int(value)
+                    elif key == 'data_recovered':
+                        # Ensure data_recovered shows correctly - handle all possible values
+                        if value in ['Yes', 'No']:
+                            value = value
+                        elif value == '':
+                            value = ""  # Show empty for empty strings
+                        else:
+                            value = str(value)  # Convert any other value to string
+                    
+                    # Convert all values to strings first
+                    value = str(value) if value is not None else ""
+                    
+                    # For better formatting, wrap ALL text content in Paragraph objects
+                    # This ensures consistent formatting and proper word wrapping
+                    if value:
+                        # Use Paragraph for all non-empty content to enable proper word wrapping
+                        value = Paragraph(value, cell_style)
+                    else:
+                        # Even empty values should be Paragraphs for consistent table formatting
+                        value = Paragraph("", cell_style)
+                    
+                    row.append(value)
                 data.append(row)
             
-            # Determine optimal page orientation based on content
-            avg_cell_width = sum(len(str(cell)) for row in data for cell in row) / (len(data) * len(headers)) if data else 0
+            # Determine optimal page orientation based on number of columns
             num_cols = len(headers)
             
-            # Use portrait for fewer columns or shorter content, landscape for more columns
-            use_landscape = num_cols > 8 or avg_cell_width > 15
+            # Use landscape for more than 8 columns, portrait otherwise
+            use_landscape = num_cols > 8
             pagesize = landscape(letter) if use_landscape else letter
             
-            # Create the PDF document
+            # Create the PDF document with better margins
             doc = SimpleDocTemplate(
                 filename,
                 pagesize=pagesize,
-                rightMargin=30,
-                leftMargin=30,
-                topMargin=30,
-                bottomMargin=30
+                rightMargin=15,
+                leftMargin=15,
+                topMargin=25,
+                bottomMargin=25
             )
-
-            # Get styles
-            styles = getSampleStyleSheet()
-            title_style = styles['Title']
-            normal_style = styles['Normal']
 
             # Prepare content elements
             elements = []
@@ -2978,68 +3096,97 @@ class CaseLogApp:
                 except Exception as e:
                     logging.warning(f"Could not add logo to PDF: {e}")
 
-            # Add title
+            # Add title using styles already defined
+            title_style = styles['Title']
             elements.append(Paragraph("Case Log Report", title_style))
             elements.append(Spacer(1, 12))
 
-            # Calculate column widths dynamically
-            page_width = pagesize[0] - 60  # Account for margins
+            # Calculate dynamic column widths based on content and page size
+            page_width = pagesize[0] - 30  # Account for margins (reduced from 40)
             
-            # Calculate relative column widths based on content
+            # Define column width preferences based on field type and content
+            col_width_preferences = {
+                'case_number': 0.8,
+                'examiner': 1.0,
+                'investigator': 1.0,
+                'agency': 1.2,
+                'city_of_offense': 1.0,
+                'state_of_offense': 0.5,
+                'start_date': 0.8,
+                'end_date': 0.8,
+                'volume_size_gb': 0.6,
+                'offense_type': 1.5,
+                'device_type': 0.8,
+                'model': 1.0,
+                'os': 0.6,
+                'data_recovered': 0.6,  # Ensure this gets proper width
+                'fpr_complete': 0.5,
+                'created_at': 0.8,
+                'notes': 2.5  # Notes get more space for word wrapping
+            }
+            
+            # Calculate column widths proportionally
+            total_weight = sum(col_width_preferences.get(key, 1.0) for key in visible_keys)
             col_widths = []
-            for i, header in enumerate(headers):
-                # Get max content length for this column
-                max_content_len = len(header)
-                for row in data:
-                    if i < len(row):
-                        max_content_len = max(max_content_len, len(str(row[i])))
-                
-                # Set minimum and maximum widths
-                min_width = 0.8 * inch
+            for key in visible_keys:
+                weight = col_width_preferences.get(key, 1.0)
+                width = (weight / total_weight) * page_width
+                # Set minimum and maximum widths to prevent columns from being too narrow or too wide
+                min_width = 0.4 * inch
                 max_width = 2.5 * inch
-                content_width = max_content_len * 6  # Approximate pixels per character
-                col_widths.append(max(min_width, min(max_width, content_width)))
+                col_widths.append(max(min_width, min(width, max_width)))
             
-            # Normalize column widths to fit page
-            total_width = sum(col_widths)
-            if total_width > page_width:
-                scale_factor = page_width / total_width
-                col_widths = [w * scale_factor for w in col_widths]
-            
-            # Create table with headers
+            # Create table with headers and data
             table_data = [headers] + data
             
-            # Create the table with word wrapping
-            table = Table(table_data, colWidths=col_widths, repeatRows=1)
+            # Create the table with improved settings for better formatting
+            table = Table(
+                table_data, 
+                colWidths=col_widths, 
+                repeatRows=1,  # Repeat header on each page
+                splitByRow=True  # Allow table to split across pages
+            )
             
-            # Apply styling with word wrapping
+            
+            # Apply comprehensive styling with improved word wrapping and formatting
             table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                # Header styling
+                ('BACKGROUND', (0, 0), (-1, 0), colors.darkblue),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 9),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('FONTSIZE', (0, 0), (-1, 0), 8),
+                ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                ('VALIGN', (0, 0), (-1, 0), 'MIDDLE'),
+                
+                # Data row styling - using smaller font for better fit
                 ('BACKGROUND', (0, 1), (-1, -1), colors.white),
                 ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
                 ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 1), (-1, -1), 8),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-                ('LEFTPADDING', (0, 0), (-1, -1), 6),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-                ('TOPPADDING', (0, 0), (-1, -1), 6),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ('FONTSIZE', (0, 1), (-1, -1), 7),  # Reduced from 8 to 7
+                ('ALIGN', (0, 1), (-1, -1), 'LEFT'),
+                ('VALIGN', (0, 1), (-1, -1), 'TOP'),  # Align to top for better readability
+                
+                # Grid and borders
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+                ('LINEBELOW', (0, 0), (-1, 0), 1, colors.darkblue),  # Thicker line under header
+                
+                # Padding for better spacing and readability
+                ('LEFTPADDING', (0, 0), (-1, -1), 3),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+                ('TOPPADDING', (0, 0), (-1, -1), 3),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),  # More bottom padding for wrapped text
+                
+                # Word wrapping and text flow settings
+                ('WORDWRAP', (0, 0), (-1, -1), True),
+                ('SPLITLONGWORDS', (0, 0), (-1, -1), True),
             ]))
             
-            # Enable word wrapping for table cells
-            for row_num in range(len(table_data)):
-                for col_num in range(len(table_data[row_num])):
-                    cell_data = table_data[row_num][col_num]
-                    if len(str(cell_data)) > 20:  # Wrap long content
-                        table.setStyle(TableStyle([
-                            ('FONTSIZE', (col_num, row_num), (col_num, row_num), 7),
-                        ]))
+            # Add alternating row colors for better readability
+            for i in range(1, len(table_data)):
+                if i % 2 == 0:
+                    table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, i), (-1, i), colors.Color(0.95, 0.95, 0.95)),  # Light gray
+                    ]))
 
             elements.append(table)
             
