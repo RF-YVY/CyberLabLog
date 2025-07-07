@@ -360,8 +360,8 @@ def update_case_db(case_id, case_data):
         cursor = conn.cursor()
 
         # Construct the SET part of the SQL query dynamically
-        # Exclude 'id', 'case_number' (shouldn't be updated directly via edit form submit), and 'created_at'
-        fields_to_update = [field for field in case_data.keys() if field not in ['id', 'case_number', 'created_at']]
+        # Exclude 'id' and 'created_at' but allow 'case_number' to be updated
+        fields_to_update = [field for field in case_data.keys() if field not in ['id', 'created_at']]
         set_clause = ', '.join([f'{field} = ?' for field in fields_to_update])
 
         if not set_clause:
