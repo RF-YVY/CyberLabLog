@@ -250,9 +250,14 @@ def add_case_db(case_data):
 
         # Convert boolean for fpr_complete to integer 0 or 1
         fpr_int = 1 if case_data.get("fpr_complete") else 0
-        # Convert boolean for data_recovered to string "Yes" or "No" or ""
+        # Convert data_recovered to standardized string format
         dr_val = case_data.get("data_recovered")
-        dr_str = "Yes" if dr_val is True else ("No" if dr_val is False else "")
+        if dr_val is True or (isinstance(dr_val, str) and dr_val.lower() in ['yes', 'true', '1']):
+            dr_str = "Yes"
+        elif dr_val is False or (isinstance(dr_val, str) and dr_val.lower() in ['no', 'false', '0']):
+            dr_str = "No"
+        else:
+            dr_str = ""
 
         # Get current timestamp for created_at
         created_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -367,10 +372,15 @@ def update_case_db(case_id, case_data):
         if 'fpr_complete' in fields_to_update:
              case_data['fpr_complete'] = 1 if case_data.get('fpr_complete') else 0
 
-        # Convert boolean for data_recovered to string "Yes" or "No" or ""
+        # Convert data_recovered to standardized string format
         if 'data_recovered' in fields_to_update:
-             dr_val = case_data.get('data_recovered')
-             case_data['data_recovered'] = "Yes" if dr_val is True else ("No" if dr_val is False else "") # Convert bool to Yes/No string
+            dr_val = case_data.get('data_recovered')
+            if dr_val is True or (isinstance(dr_val, str) and dr_val.lower() in ['yes', 'true', '1']):
+                case_data['data_recovered'] = "Yes"
+            elif dr_val is False or (isinstance(dr_val, str) and dr_val.lower() in ['no', 'false', '0']):
+                case_data['data_recovered'] = "No"
+            else:
+                case_data['data_recovered'] = ""
 
 
         # Prepare the values tuple, ensuring the order matches the set_clause
@@ -1069,59 +1079,115 @@ class CaseLogApp:
         btn.grid(row=len(all_columns)+8, column=0, pady=15)
 
     def export_custom_report_pdf(self, headers, rows):
+        """Export custom report as PDF with improved formatting and word wrapping."""
         from tkinter import filedialog
         from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
         from reportlab.lib.styles import getSampleStyleSheet
         from reportlab.lib.pagesizes import letter, landscape
         from reportlab.lib import colors
         from datetime import datetime
+        
         # Prompt for header info if not set
         info = self.get_report_header_info()
         if not any(info.values()):
             self.prompt_report_header_info()
             info = self.get_report_header_info()
-        filename = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF files", "*.pdf")], title="Save PDF Report")
+        
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".pdf", 
+            filetypes=[("PDF files", "*.pdf")], 
+            title="Save PDF Report"
+        )
         if not filename:
             return
-        doc = SimpleDocTemplate(filename, pagesize=landscape(letter))
-        style = getSampleStyleSheet()["Normal"]
-        data = [headers] + rows
-        table = Table(data, repeatRows=1)
-        table.setStyle(TableStyle([
-            ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
-            ("TEXTCOLOR", (0,0), (-1,0), colors.black),
-            ("ALIGN", (0,0), (-1,-1), "LEFT"),
-            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
-            ("FONTSIZE", (0,0), (-1,-1), 9),
-            ("BOTTOMPADDING", (0,0), (-1,0), 8),
-            ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
-        ]))
-        elements = []
-        # Header info at top right
-        header_info = self.get_report_header_info()
-        now_str = datetime.now().strftime('%Y-%m-%d')
-        header_lines = [
-            f"Name: {header_info.get('Name','')}",
-            f"Agency: {header_info.get('Agency','')}",
-            f"Division: {header_info.get('Division','')}",
-            f"Date: {now_str}"
-        ]
-        header_table = Table([[Paragraph(line, style)] for line in header_lines], hAlign='RIGHT')
-        elements.append(header_table)
-        elements.append(Spacer(1, 12))
-        # Logo at top right if available
+
         try:
-            if os.path.exists(LOGO_FILENAME):
-                logo_width = 1.1*inch
-                logo_height = 1.1*inch
-                img = RLImage(LOGO_FILENAME, width=logo_width, height=logo_height)
-                elements.append(img)
-                elements.append(Spacer(1, 12))
-        except Exception:
-            pass
-        elements.append(table)
-        doc.build(elements)
-        Messagebox.show_info("Report Exported", f"Custom PDF report saved to:\n{filename}")
+            # Determine optimal page orientation based on content
+            avg_cell_width = sum(len(str(cell)) for row in rows for cell in row) / (len(rows) * len(headers)) if rows else 0
+            num_cols = len(headers)
+            
+            # Use portrait for fewer columns or shorter content, landscape for more columns
+            use_landscape = num_cols > 8 or avg_cell_width > 15
+            pagesize = landscape(letter) if use_landscape else letter
+            
+            doc = SimpleDocTemplate(filename, pagesize=pagesize)
+            style = getSampleStyleSheet()["Normal"]
+            
+            # Calculate column widths dynamically
+            page_width = pagesize[0] - 60  # Account for margins
+            
+            # Calculate relative column widths based on content
+            col_widths = []
+            for i, header in enumerate(headers):
+                # Get max content length for this column
+                max_content_len = len(header)
+                for row in rows:
+                    if i < len(row):
+                        max_content_len = max(max_content_len, len(str(row[i])))
+                
+                # Set minimum and maximum widths
+                min_width = 0.8 * inch
+                max_width = 2.5 * inch
+                content_width = max_content_len * 6  # Approximate pixels per character
+                col_widths.append(max(min_width, min(max_width, content_width)))
+            
+            # Normalize column widths to fit page
+            total_width = sum(col_widths)
+            if total_width > page_width:
+                scale_factor = page_width / total_width
+                col_widths = [w * scale_factor for w in col_widths]
+            
+            data = [headers] + rows
+            table = Table(data, colWidths=col_widths, repeatRows=1)
+            
+            table.setStyle(TableStyle([
+                ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
+                ("TEXTCOLOR", (0,0), (-1,0), colors.black),
+                ("ALIGN", (0,0), (-1,-1), "LEFT"),
+                ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+                ("FONTSIZE", (0,0), (-1,-1), 9),
+                ("BOTTOMPADDING", (0,0), (-1,0), 8),
+                ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 6),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ]))
+            
+            elements = []
+            
+            # Header info at top right
+            header_info = self.get_report_header_info()
+            now_str = datetime.now().strftime('%Y-%m-%d')
+            header_lines = [
+                f"Name: {header_info.get('Name','')}",
+                f"Agency: {header_info.get('Agency','')}",
+                f"Division: {header_info.get('Division','')}",
+                f"Date: {now_str}"
+            ]
+            header_table = Table([[Paragraph(line, style)] for line in header_lines], hAlign='RIGHT')
+            elements.append(header_table)
+            elements.append(Spacer(1, 12))
+            
+            # Logo at top right if available
+            try:
+                if os.path.exists(LOGO_FILENAME):
+                    logo_width = 1.1*inch
+                    logo_height = 1.1*inch
+                    img = RLImage(LOGO_FILENAME, width=logo_width, height=logo_height)
+                    elements.append(img)
+                    elements.append(Spacer(1, 12))
+            except Exception:
+                pass
+            
+            elements.append(table)
+            doc.build(elements)
+            Messagebox.show_info("Report Exported", f"Custom PDF report saved to:\n{filename}")
+            
+        except Exception as e:
+            logging.error(f"Error generating custom PDF report: {e}")
+            Messagebox.show_error("Error", f"Failed to generate custom PDF report: {e}")
 
     def export_custom_report_xlsx(self, headers, rows):
         from tkinter import filedialog
@@ -1355,116 +1421,8 @@ class CaseLogApp:
             self.processing_queue = False
             if self.map_status_label:
                 self.map_status_label.config(text=f"Map status: {len(self.map_markers)} locations loaded (all done)")
-    def import_cases_from_xlsx(self):
-        """Import cases from an XLSX file exported by this or previous versions. Imports ALL rows, regardless of duplicate or missing fields. Ensures DB is initialized before import."""
-        import pandas as pd
-        # Ensure database and tables exist before import
-        try:
-            init_db()
-        except Exception as e:
-            logging.error(f"Failed to initialize database before import: {e}")
-            Messagebox.show_error("Database Error", f"Failed to initialize database: {e}")
-            return
+    # Removed duplicate import_cases_from_xlsx function - using the newer version below
 
-        filename = filedialog.askopenfilename(
-            filetypes=[("Excel files", "*.xlsx")],
-            title="Select Excel File to Import"
-        )
-        if not filename:
-            return
-
-        try:
-            self.update_status("Importing cases from XLSX...")
-            df = pd.read_excel(filename)
-            expected_headers = [
-                "ID", "Case #", "Examiner", "Investigator", "Agency", "City", "State",
-                "Start (MM-DD-YYYY)", "End (MM-DD-YYYY)", "Vol (GB)", "Offense", "Device", "Model", "OS",
-                "Recovered?", "FPR?", "Notes", "Created (YYYY-MM-DD)"
-            ]
-            df.columns = [str(col).strip() for col in df.columns]
-            header_map = {h.lower(): h for h in df.columns}
-            for h in expected_headers:
-                if h not in df.columns:
-                    Messagebox.show_error("Import Error", f"Missing required column: {h}")
-                    self.update_status(f"Import failed: missing column {h}")
-                    return
-
-            imported_count = 0
-            failed_count = 0
-            for idx, row in df.iterrows():
-                case_data = {
-                    "case_number": str(row.get("Case #", "")).strip() if not pd.isnull(row.get("Case #", "")) else None,
-                    "examiner": str(row.get("Examiner", "")).strip() if not pd.isnull(row.get("Examiner", "")) else None,
-                    "investigator": str(row.get("Investigator", "")).strip() if not pd.isnull(row.get("Investigator", "")) else None,
-                    "agency": str(row.get("Agency", "")).strip() if not pd.isnull(row.get("Agency", "")) else None,
-                    "city_of_offense": str(row.get("City", "")).strip() if not pd.isnull(row.get("City", "")) else None,
-                    "state_of_offense": str(row.get("State", "")).strip() if not pd.isnull(row.get("State", "")) else None,
-                    "start_date": None,
-                    "end_date": None,
-                    "volume_size_gb": None,
-                    "offense_type": str(row.get("Offense", "")).strip() if not pd.isnull(row.get("Offense", "")) else None,
-                    "device_type": str(row.get("Device", "")).strip() if not pd.isnull(row.get("Device", "")) else None,
-                    "model": str(row.get("Model", "")).strip() if not pd.isnull(row.get("Model", "")) else None,
-                    "os": str(row.get("OS", "")).strip() if not pd.isnull(row.get("OS", "")) else None,
-                    "data_recovered": None,
-                    "fpr_complete": None,
-                    "notes": str(row.get("Notes", "")).strip() if not pd.isnull(row.get("Notes", "")) else None,
-                }
-                # Parse dates
-                try:
-                    sd = str(row.get("Start (MM-DD-YYYY)", "")).strip()
-                    if sd:
-                        case_data["start_date"] = datetime.strptime(sd, "%m-%d-%Y").strftime("%Y-%m-%d")
-                except Exception:
-                    case_data["start_date"] = None
-                try:
-                    ed = str(row.get("End (MM-DD-YYYY)", "")).strip()
-                    if ed:
-                        case_data["end_date"] = datetime.strptime(ed, "%m-%d-%Y").strftime("%Y-%m-%d")
-                except Exception:
-                    case_data["end_date"] = None
-                # Parse volume size
-                try:
-                    vs = row.get("Vol (GB)", None)
-                    if pd.notnull(vs):
-                        case_data["volume_size_gb"] = float(vs)
-                except Exception:
-                    case_data["volume_size_gb"] = None
-                # Parse data_recovered (Recovered?)
-                dr = str(row.get("Recovered?", "")).strip().lower() if not pd.isnull(row.get("Recovered?", "")) else ""
-                if dr == "yes":
-                    case_data["data_recovered"] = True
-                elif dr == "no":
-                    case_data["data_recovered"] = False
-                else:
-                    case_data["data_recovered"] = None
-                # Parse fpr_complete (FPR?)
-                fpr = str(row.get("FPR?", "")).strip().lower() if not pd.isnull(row.get("FPR?", "")) else ""
-                if fpr == "yes":
-                    case_data["fpr_complete"] = True
-                elif fpr == "no":
-                    case_data["fpr_complete"] = False
-                else:
-                    case_data["fpr_complete"] = None
-                created_at = str(row.get("Created (YYYY-MM-DD)", "")).strip() if not pd.isnull(row.get("Created (YYYY-MM-DD)", "")) else None
-                if created_at:
-                    case_data["created_at"] = created_at
-                # Add to DB (import all rows, even if case_number is duplicated or empty)
-                success = add_case_db(case_data)
-                if success:
-                    imported_count += 1
-                else:
-                    failed_count += 1
-                    logging.warning(f"Row {idx+1} failed to add: {case_data}")
-            Messagebox.show_info("Import Complete", f"Imported {imported_count} rows from XLSX. {failed_count} failed.")
-            self.refresh_data_view()
-            self.load_map_markers()
-            self.populate_graph_filters()
-            self.update_status(f"Imported {imported_count} rows from XLSX. {failed_count} failed.")
-        except Exception as e:
-            logging.error(f"Error importing cases from XLSX: {e}")
-            Messagebox.show_error("Import Error", f"Failed to import cases: {e}")
-            self.update_status("Import failed.")
     def on_closing(self):
         """Safely handle application shutdown, canceling background tasks and scheduled callbacks, and ensuring map widget is destroyed to prevent background errors."""
         # Cancel any scheduled .after() callbacks
@@ -2149,8 +2107,8 @@ class CaseLogApp:
         # 'aria-label' is not a valid Tkinter option; skip for compatibility
         # Add accessible tooltips (if available)
         try:
-            import tooltip
-            tooltip.create(search_entry, 'Type to search/filter cases. Press Enter to apply.')
+            from ttkbootstrap.tooltip import ToolTip
+            ToolTip(search_entry, 'Type to search/filter cases. Press Enter to apply.')
         except Exception:
             pass
 
@@ -2696,7 +2654,13 @@ class CaseLogApp:
         # Handle 'data_recovered' - it comes as boolean from the checkbox now
         # Convert boolean to "Yes", "No", or "" string for database storage
         dr_val = case_data.get('data_recovered') # This is True/False
-        case_data['data_recovered'] = "Yes" if dr_val is True else ("No" if dr_val is False else "") # Convert bool to Yes/No string
+        # Fix: Only convert to empty string if the value is None, not False
+        if dr_val is True:
+            case_data['data_recovered'] = "Yes"
+        elif dr_val is False:
+            case_data['data_recovered'] = "No"
+        else:
+            case_data['data_recovered'] = ""
 
         # Ensure fpr_complete is handled correctly (already was BooleanVar)
         # submit_case handles this conversion to 0/1 for DB before insertion/update
@@ -2940,7 +2904,7 @@ class CaseLogApp:
                                                           anchor='center')
 
     def export_pdf_report(self):
-        """Export all cases to a PDF report."""
+        """Export all cases to a PDF report with improved formatting and word wrapping."""
         # Ask user for save location
         filename = filedialog.asksaveasfilename(
             defaultextension=".pdf",
@@ -2952,10 +2916,44 @@ class CaseLogApp:
 
         try:
             self.update_status("Generating PDF report...")
+            
+            # Get all cases
+            cases = get_all_cases_db()
+            
+            # Prepare table data
+            headers = [
+                config["text"] for key, config in self.tree_columns_config.items()
+                if config.get("visible", True) and key not in ['id']
+            ]
+            
+            data = []
+            for case in cases:
+                row = []
+                for key, config in self.tree_columns_config.items():
+                    if config.get("visible", True) and key != 'id':
+                        value = case.get(key, '')
+                        if key in ['start_date', 'end_date', 'created_at']:
+                            value = format_date_str_for_display(value)
+                        elif key == 'fpr_complete':
+                            value = format_bool_int(value)
+                        elif key == 'data_recovered':
+                            # data_recovered is stored as "Yes", "No", or "" - just display as is
+                            value = value if value else ""
+                        row.append(str(value))
+                data.append(row)
+            
+            # Determine optimal page orientation based on content
+            avg_cell_width = sum(len(str(cell)) for row in data for cell in row) / (len(data) * len(headers)) if data else 0
+            num_cols = len(headers)
+            
+            # Use portrait for fewer columns or shorter content, landscape for more columns
+            use_landscape = num_cols > 8 or avg_cell_width > 15
+            pagesize = landscape(letter) if use_landscape else letter
+            
             # Create the PDF document
             doc = SimpleDocTemplate(
                 filename,
-                pagesize=landscape(letter),
+                pagesize=pagesize,
                 rightMargin=30,
                 leftMargin=30,
                 topMargin=30,
@@ -2984,46 +2982,64 @@ class CaseLogApp:
             elements.append(Paragraph("Case Log Report", title_style))
             elements.append(Spacer(1, 12))
 
-            # Get all cases
-            cases = get_all_cases_db()
-
-            # Prepare table data
-            headers = [
-                config["text"] for key, config in self.tree_columns_config.items()
-                if config.get("visible", True) and key not in ['id']
-            ]
+            # Calculate column widths dynamically
+            page_width = pagesize[0] - 60  # Account for margins
             
-            data = [headers]  # Start with headers
+            # Calculate relative column widths based on content
+            col_widths = []
+            for i, header in enumerate(headers):
+                # Get max content length for this column
+                max_content_len = len(header)
+                for row in data:
+                    if i < len(row):
+                        max_content_len = max(max_content_len, len(str(row[i])))
+                
+                # Set minimum and maximum widths
+                min_width = 0.8 * inch
+                max_width = 2.5 * inch
+                content_width = max_content_len * 6  # Approximate pixels per character
+                col_widths.append(max(min_width, min(max_width, content_width)))
             
-            for case in cases:
-                row = []
-                for key, config in self.tree_columns_config.items():
-                    if config.get("visible", True) and key != 'id':
-                        value = case.get(key, '')
-                        if key in ['start_date', 'end_date', 'created_at']:
-                            value = format_date_str_for_display(value)
-                        elif key == 'fpr_complete':
-                            value = format_bool_int(value)
-                        row.append(str(value))
-                data.append(row)
-
-            # Create the table
-            table = Table(data)
+            # Normalize column widths to fit page
+            total_width = sum(col_widths)
+            if total_width > page_width:
+                scale_factor = page_width / total_width
+                col_widths = [w * scale_factor for w in col_widths]
+            
+            # Create table with headers
+            table_data = [headers] + data
+            
+            # Create the table with word wrapping
+            table = Table(table_data, colWidths=col_widths, repeatRows=1)
+            
+            # Apply styling with word wrapping
             table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('FONTSIZE', (0, 0), (-1, 0), 9),
                 ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
                 ('BACKGROUND', (0, 1), (-1, -1), colors.white),
                 ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
                 ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
                 ('FONTSIZE', (0, 1), (-1, -1), 8),
                 ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 6),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
             ]))
+            
+            # Enable word wrapping for table cells
+            for row_num in range(len(table_data)):
+                for col_num in range(len(table_data[row_num])):
+                    cell_data = table_data[row_num][col_num]
+                    if len(str(cell_data)) > 20:  # Wrap long content
+                        table.setStyle(TableStyle([
+                            ('FONTSIZE', (col_num, row_num), (col_num, row_num), 7),
+                        ]))
 
             elements.append(table)
             
