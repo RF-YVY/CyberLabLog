@@ -17,7 +17,7 @@ A digital forensics case log and reporting tool for labs and agencies, built wit
 
 ![Image](https://github.com/user-attachments/assets/a2e67522-42d9-4975-9d7a-85f0b579b4ec)
 
-https://github.com/user-attachments/assets/115cef22-3966-4b95-bef6-a95480fddc4f
+![Image](https://github.com/user-attachments/assets/115cef22-3966-4b95-bef6-a95480fddc4f)
 
 ![Image](https://github.com/user-attachments/assets/538a85f3-8eef-4fa0-a420-418cf6b599f4)
 
