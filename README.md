@@ -1,9 +1,9 @@
 Download exe from releases, place into a folder on your PC.  Create shortcut to desktop.  Application when launched will create a database file and folder where the exe is located.  
--Please report any bugs.  
--Future fixes: When customizing columns in view data, your selection/deselection only goes into effect after closing and relaunching application. Fix: Have UI view auto refresh on applying.  
--Application on launch looks for new updates, manually check in settings view. If update available, link to github page for new release.  
--Recommend to back up data before updating for good practice.  
--**If updating to new version, simply replace the exe where you saved it before, leaving the database folder and file will auto populate application with your previous data.**  
+- Please report any bugs.  
+- Future fixes: When customizing columns in view data, your selection/deselection only goes into effect after closing and relaunching application. Fix: Have UI view auto refresh on applying.  
+- Application on launch looks for new updates, manually check in settings view. If update available, link to github page for new release.  
+- Recommend to back up data before updating for good practice.  
+- **If updating to new version, simply replace the exe where you saved it before, leaving the database folder and file will auto populate application with your previous data.**  
   
 # CyberLab Case Tracker
 
