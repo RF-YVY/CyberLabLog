@@ -1,38 +1,21 @@
-CyberLabLog Non-Commercial License 1.0
+MIT License
 
-Copyright (c) 2025 RF-YVY and contributors
+Copyright (c) 2025 RF-YVY
 
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
-documentation files (the "Software"), to use, copy, modify, merge, publish, and distribute the Software, subject to
-the following conditions:
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-1. Non-Commercial Use Only.
-   You may not Sell the Software or otherwise monetize it. "Sell" means, without limitation:
-   - charging a fee or other consideration for the Software itself, copies of it, or access to it;
-   - offering the Software as a paid service (including SaaS/hosted access) or behind a paywall;
-   - licensing, sublicensing, or distributing the Software in exchange for money or any other consideration;
-   - deriving advertising, sponsorship, or other revenue primarily attributable to the Software.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-   Non-commercial uses include personal, educational, research, evaluation, internal lab/agency use, and open,
-   no-charge redistribution. You may provide support, services, or consulting related to the Software, so long as you
-   do not charge for the Software itself, paid access to it, or any hosted instance of it.
-
-2. Notice Preservation.
-   You must retain the above copyright notice and this permission notice in all copies or substantial portions of the
-   Software and in any redistribution or publication derived from it.
-
-3. Trademark.
-   This license does not grant permission to use the names, logos, or trademarks of the contributors except as required
-   for reasonable and customary use in describing the origin of the Software.
-
-4. No Warranty.
-   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
-   WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-   COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-   OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-5. Open Source Note.
-   This license allows broad use, modification, and redistribution, but it restricts commercialization. As such, it is
-   considered "source-available" and is not an OSI-approved Open Source license.
-
-For a commercial license or exceptions to these terms, please contact the authors.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
