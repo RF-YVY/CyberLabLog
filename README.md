@@ -21,7 +21,7 @@ A digital forensics case log and reporting tool for labs and agencies, built wit
 - **Customizable:** Change themes, logo, and map marker icon.
 - **Security:** Password-protected data deletion and settings.
 - **About Tab:** Comprehensive app info and clickable developer GitHub link.
-
+  
 ![Image](https://github.com/user-attachments/assets/a2e67522-42d9-4975-9d7a-85f0b579b4ec)
 
 ![Image](https://github.com/user-attachments/assets/115cef22-3966-4b95-bef6-a95480fddc4f)
@@ -37,6 +37,7 @@ A digital forensics case log and reporting tool for labs and agencies, built wit
 ## XLSX Import Format
 
 When importing cases from an Excel file, the following column headers are **required** (case-sensitive):
+![Image](https://github.com/user-attachments/assets/d22eb192-711a-4a9d-8c79-5305134a6c75)
 
 | Column Header | Description | Format/Type |
 |---------------|-------------|-------------|
