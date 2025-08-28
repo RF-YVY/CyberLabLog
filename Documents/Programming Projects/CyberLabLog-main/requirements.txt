@@ -1,8 +1,0 @@
-matplotlib
-ttkbootstrap
-tkintermapview
-geopy
-openpyxl
-reportlab
-pandas
-requests
