@@ -5,7 +5,10 @@ a = Analysis(
     ['CyberLabCaseTracker.py'],
     pathex=[],
     binaries=[],
-    datas=[('markerblue.png', '.')],
+    datas=[
+        ('markerblue.png', '.'),
+        ('app_data/*', 'app_data'),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

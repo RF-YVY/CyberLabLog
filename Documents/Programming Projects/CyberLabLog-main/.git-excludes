@@ -1,0 +1,33 @@
+############################################
+# Repo-level excludes to avoid home noise  #
+# Root is C:/Users/NCFI Student            #
+############################################
+
+# Noisy system/user directories at repo root
+/AppData/**
+/OneDrive/**
+/Contacts/**
+/Desktop/**
+/Downloads/**
+/Favorites/**
+/Links/**
+/Music/**
+/Pictures/**
+/Saved Games/**
+/Searches/**
+/Videos/**
+
+# User hive and OS junk
+/NTUSER.DAT*
+/ntuser.dat*
+/NTUSER.INI
+/Thumbs.db
+
+# Node/python common caches anywhere
+**/node_modules/**
+**/__pycache__/**
+**/.pytest_cache/**
+
+# Project-specific build outputs
+/Documents/Programming Projects/CyberLabLog-main/build/**
+/Documents/Programming Projects/CyberLabLog-main/dist/**

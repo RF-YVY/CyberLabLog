@@ -47,19 +47,51 @@ import pandas as pd
 # --- App Constants & Paths ---
 APP_NAME = "CyberLab Case Tracker"
 APP_VERSION = "2.1.1"
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Determine a persistent base directory:
+# - When frozen by PyInstaller (--onefile), use the folder containing the executable
+#   so data (DB, app_data) persists across runs.
+# - When running from source, use the directory of this file.
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 DATA_DIR = os.path.join(BASE_DIR, 'app_data')
 DB_FILENAME = os.path.join(BASE_DIR, 'caselog_gui_v6.db')
 LOG_FILENAME = os.path.join(DATA_DIR, 'app.log')
-
-# Lightweight runtime counters (reset on each app start)
-GEOCACHE_HITS = 0
-GEOCACHE_MISSES = 0
 LOGO_FILENAME = os.path.join(DATA_DIR, 'logo.png')
 MARKER_ICON_FILENAME = os.path.join(DATA_DIR, 'marker_icon.png')
 ICON_FILENAME = os.path.join(BASE_DIR, 'digital.ico')
 BACKUP_DIR = os.path.join(DATA_DIR, 'backups')
 DEFAULT_PASSWORD = "password"
+
+# Ensure persistent data directories exist early (for images, logs, backups)
+try:
+    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+except Exception:
+    # Non-fatal; specific operations will re-attempt as needed
+    pass
+
+# If running from a PyInstaller bundle, seed default assets from the bundle on first run
+try:
+    if getattr(sys, 'frozen', False):
+        bundle_dir = getattr(sys, '_MEIPASS', None)
+        if bundle_dir:
+            src_app_data = os.path.join(bundle_dir, 'app_data')
+            if os.path.isdir(src_app_data):
+                # copy logo.png and marker_icon.png if missing
+                for fname in ('logo.png', 'marker_icon.png'):
+                    dst = os.path.join(DATA_DIR, fname)
+                    if not os.path.exists(dst):
+                        src = os.path.join(src_app_data, fname)
+                        if os.path.exists(src):
+                            try:
+                                shutil.copy2(src, dst)
+                            except Exception:
+                                pass
+except Exception:
+    pass
 
 # Theme options exposed in Settings for ttkbootstrap
 THEME_OPTIONS = [
@@ -178,13 +210,21 @@ def _set_window_icon(root):
     except Exception:
         pass
 
+# Runtime geocache counters
+GEOCACHE_HITS = 0
+GEOCACHE_MISSES = 0
+
 def init_db():
     """Initializes the SQLite database and creates the case_log table if it doesn't exist."""
     conn = None # Initialize conn to None
     try:
         db_path = os.path.abspath(DB_FILENAME)
         logging.info(f"[init_db] Using database file: {db_path}")
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path, timeout=10)
+        try:
+            conn.execute("PRAGMA busy_timeout=8000")
+        except Exception:
+            pass
         cursor = conn.cursor()
 
         # Create case_log table with an auto-incrementing primary key 'id'
@@ -320,7 +360,11 @@ def get_cached_location_db(location_key):
     """Retrieves cached latitude and longitude for a location_key."""
     conn = None
     try:
-        conn = sqlite3.connect(DB_FILENAME)
+        conn = sqlite3.connect(DB_FILENAME, timeout=10)
+        try:
+            conn.execute("PRAGMA busy_timeout=8000")
+        except Exception:
+            pass
         cursor = conn.cursor()
         cursor.execute("SELECT latitude, longitude FROM geocache WHERE location_key = ?", (location_key,))
         row = cursor.fetchone()
@@ -349,7 +393,11 @@ def add_cached_location_db(location_key, latitude, longitude):
     """Adds or updates a location in the geocache."""
     conn = None
     try:
-        conn = sqlite3.connect(DB_FILENAME)
+        conn = sqlite3.connect(DB_FILENAME, timeout=10)
+        try:
+            conn.execute("PRAGMA busy_timeout=8000")
+        except Exception:
+            pass
         cursor = conn.cursor()
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         cursor.execute('''
@@ -365,7 +413,11 @@ def add_cached_location_db(location_key, latitude, longitude):
 def optimize_database():
     """Run VACUUM and ANALYZE to optimize the SQLite database."""
     try:
-        conn = sqlite3.connect(DB_FILENAME)
+        conn = sqlite3.connect(DB_FILENAME, timeout=10)
+        try:
+            conn.execute("PRAGMA busy_timeout=8000")
+        except Exception:
+            pass
         cur = conn.cursor()
         cur.execute("PRAGMA optimize")
         cur.execute("VACUUM")
@@ -430,7 +482,13 @@ def add_case_db(case_data):
     try:
         db_path = os.path.abspath(DB_FILENAME)
         logging.info(f"[add_case_db] Using database file: {db_path}")
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path, timeout=10)
+        try:
+            conn.execute("PRAGMA busy_timeout=8000")
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+        except Exception:
+            pass
         cursor = conn.cursor()
 
         # Convert boolean for fpr_complete to integer 0 or 1
@@ -764,46 +822,65 @@ def get_case_by_id_db(case_id):
 
 def update_case_db(case_id, case_data):
     """Updates an existing case record in the database."""
-    conn = None
-    try:
-        conn = sqlite3.connect(DB_FILENAME)
-        cursor = conn.cursor()
+    import time
+    attempts = 0
+    while attempts < 5:
+        conn = None
+        try:
+            conn = sqlite3.connect(DB_FILENAME, timeout=10)
+            try:
+                conn.execute("PRAGMA busy_timeout=8000")
+            except Exception:
+                pass
+            cursor = conn.cursor()
 
-        fields_to_update = [field for field in case_data.keys() if field not in ['id', 'created_at']]
-        set_clause = ', '.join([f'{field} = ?' for field in fields_to_update])
-        if not set_clause:
-            logging.warning(f"No valid fields to update for case ID {case_id}.")
+            fields_to_update = [field for field in case_data.keys() if field not in ['id', 'created_at']]
+            set_clause = ', '.join([f'{field} = ?' for field in fields_to_update])
+            if not set_clause:
+                logging.warning(f"No valid fields to update for case ID {case_id}.")
+                return False
+
+            if 'fpr_complete' in fields_to_update:
+                case_data['fpr_complete'] = 1 if case_data.get('fpr_complete') else 0
+            if 'data_recovered' in fields_to_update:
+                dr_val = case_data.get('data_recovered')
+                if dr_val is True or (isinstance(dr_val, str) and dr_val.lower() in ['yes', 'true', '1']):
+                    case_data['data_recovered'] = 'Yes'
+                elif dr_val is False or (isinstance(dr_val, str) and dr_val.lower() in ['no', 'false', '0']):
+                    case_data['data_recovered'] = 'No'
+                else:
+                    case_data['data_recovered'] = ''
+
+            values = tuple(case_data[field] for field in fields_to_update) + (case_id,)
+            cursor.execute(
+                f"""
+                UPDATE case_log
+                SET {set_clause}
+                WHERE id = ?
+                """,
+                values,
+            )
+            conn.commit()
+            logging.info(f"Case ID {case_id} updated successfully in DB.")
+            return True
+        except sqlite3.OperationalError as e:
+            if 'locked' in str(e).lower():
+                attempts += 1
+                time.sleep(0.2 * attempts)
+                continue
+            logging.error(f"OperationalError updating case ID {case_id}: {e}")
             return False
-
-        if 'fpr_complete' in fields_to_update:
-            case_data['fpr_complete'] = 1 if case_data.get('fpr_complete') else 0
-        if 'data_recovered' in fields_to_update:
-            dr_val = case_data.get('data_recovered')
-            if dr_val is True or (isinstance(dr_val, str) and dr_val.lower() in ['yes', 'true', '1']):
-                case_data['data_recovered'] = 'Yes'
-            elif dr_val is False or (isinstance(dr_val, str) and dr_val.lower() in ['no', 'false', '0']):
-                case_data['data_recovered'] = 'No'
-            else:
-                case_data['data_recovered'] = ''
-
-        values = tuple(case_data[field] for field in fields_to_update) + (case_id,)
-        cursor.execute(
-            f"""
-            UPDATE case_log
-            SET {set_clause}
-            WHERE id = ?
-            """,
-            values,
-        )
-        conn.commit()
-        logging.info(f"Case ID {case_id} updated successfully in DB.")
-        return True
-    except Exception as e:
-        logging.error(f"Failed to update case ID {case_id} in DB: {e}")
-        return False
-    finally:
-        if conn:
-            conn.close()
+        except Exception as e:
+            logging.error(f"Failed to update case ID {case_id} in DB: {e}")
+            return False
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    logging.error(f"Failed to update case ID {case_id} after {attempts} attempts (locked).")
+    return False
 
     
 
@@ -812,7 +889,11 @@ def delete_case_db(case_id):
     """Deletes a case record from the database by its ID."""
     conn = None
     try:
-        conn = sqlite3.connect(DB_FILENAME)
+        conn = sqlite3.connect(DB_FILENAME, timeout=10)
+        try:
+            conn.execute("PRAGMA busy_timeout=8000")
+        except Exception:
+            pass
         cursor = conn.cursor()
         
         # Debug: Log what we're trying to delete
@@ -843,6 +924,36 @@ def delete_case_db(case_id):
     finally:
         if conn:
             conn.close()
+
+def get_recent_activities(limit=10):
+    """Return a simple list of recent activities derived from case_log timestamps.
+    Since the dedicated activity timeline is disabled, we approximate recent activity
+    as the most recently created cases.
+
+    Returns a list of dicts with keys: activity_type, case_number, timestamp.
+    """
+    items = []
+    try:
+        conn = sqlite3.connect(DB_FILENAME)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT case_number, created_at FROM case_log ORDER BY datetime(created_at) DESC LIMIT ?",
+            (int(limit) if isinstance(limit, int) else 10,)
+        )
+        for row in cur.fetchall():
+            items.append({
+                'activity_type': 'Case',
+                'case_number': row[0],
+                'timestamp': row[1],
+            })
+    except Exception as e:
+        logging.warning(f"get_recent_activities failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return items
 
 
 def generate_salt(length=16):
@@ -1304,6 +1415,28 @@ class CaseLogApp:
             entry.grid(row=i, column=1, padx=8, pady=6)
             vars[field] = var
 
+        # Button row
+        btn_row = ttk.Frame(win)
+        btn_row.grid(row=len(fields), column=0, columnspan=2, pady=(10, 8))
+
+        def do_save():
+            data = {f: v.get().strip() for f, v in vars.items()}
+            try:
+                self.set_report_header_info(data)
+                try:
+                    Messagebox.show_info("Saved", "Report header info saved.")
+                except Exception:
+                    pass
+                win.destroy()
+            except Exception as e:
+                try:
+                    Messagebox.show_error("Save Failed", f"Could not save header info: {e}")
+                except Exception:
+                    pass
+
+        ttk.Button(btn_row, text="Save", command=do_save).pack(side='right', padx=(6, 0))
+        ttk.Button(btn_row, text="Cancel", command=win.destroy).pack(side='right')
+
     # --- Lazy Loading for View Data Treeview ---
     def init_lazy_loading(self):
         """Initialize lazy loading state for the View Data Treeview."""
@@ -1382,13 +1515,11 @@ class CaseLogApp:
     
     def show_date_range_report(self):
         """Show dialog for date range report options and generate filtered case reports."""
-        import tkinter as tk
         from tkinter import Toplevel, Label, Button, StringVar, ttk, messagebox
         from datetime import datetime, timedelta
 
         win = Toplevel(self.root)
         win.title("Date Range Report")
-        # Compact dialog while keeping fields/buttons visible
         win.geometry("480x360")
         try:
             win.minsize(460, 340)
@@ -1403,36 +1534,87 @@ class CaseLogApp:
         content.pack(anchor='center', padx=10, pady=10)
 
         # Date range selection
-        Label(content, text="Date Range Report", font=('TkDefaultFont', 12, 'bold')).grid(row=0, column=0, columnspan=2, pady=(10,15))
+        Label(content, text="Date Range Report", font=('TkDefaultFont', 12, 'bold')).grid(row=0, column=0, columnspan=2, pady=(10, 15))
 
-        Label(content, text="Start Date (YYYY-MM-DD):").grid(row=1, column=0, sticky='w', padx=10, pady=5)
+        Label(content, text="Start Date:").grid(row=1, column=0, sticky='w', padx=10, pady=5)
         start_var = StringVar(value="")
-        start_entry = tk.Entry(content, textvariable=start_var, width=15)
-        start_entry.grid(row=1, column=1, padx=5, pady=5)
+        start_entry = DateEntry(content, dateformat='%Y-%m-%d', firstweekday=0, bootstyle="secondary")
+        start_entry.grid(row=1, column=1, padx=5, pady=5, sticky='w')
+        try:
+            start_entry.entry.configure(textvariable=start_var)
+        except Exception:
+            pass
 
-        Label(content, text="End Date (YYYY-MM-DD):").grid(row=2, column=0, sticky='w', padx=10, pady=5)
+        Label(content, text="End Date:").grid(row=2, column=0, sticky='w', padx=10, pady=5)
         end_var = StringVar(value="")
-        end_entry = tk.Entry(content, textvariable=end_var, width=15)
-        end_entry.grid(row=2, column=1, padx=5, pady=5)
+        end_entry = DateEntry(content, dateformat='%Y-%m-%d', firstweekday=0, bootstyle="secondary")
+        end_entry.grid(row=2, column=1, padx=5, pady=5, sticky='w')
+        try:
+            end_entry.entry.configure(textvariable=end_var)
+        except Exception:
+            pass
 
         # Quick date selections (single row)
         quick_row = ttk.Frame(content)
-        quick_row.grid(row=3, column=0, columnspan=2, pady=(10,5))
-        Label(quick_row, text="Quick:").pack(side='left', padx=(0,6))
+        quick_row.grid(row=3, column=0, columnspan=2, pady=(10, 5))
+        Label(quick_row, text="Quick:").pack(side='left', padx=(0, 6))
+
+        def set_last_30_days():
+            today = datetime.now().date()
+            start = today - timedelta(days=30)
+            sv = start.strftime('%Y-%m-%d')
+            ev = today.strftime('%Y-%m-%d')
+            start_var.set(sv)
+            end_var.set(ev)
+            try:
+                start_entry.entry.delete(0, 'end'); start_entry.entry.insert(0, sv)
+                end_entry.entry.delete(0, 'end'); end_entry.entry.insert(0, ev)
+            except Exception:
+                pass
+
+        def set_current_month():
+            today = datetime.now().date()
+            first = today.replace(day=1)
+            import calendar as _cal
+            last_day = _cal.monthrange(today.year, today.month)[1]
+            last = today.replace(day=last_day)
+            sv = first.strftime('%Y-%m-%d')
+            ev = last.strftime('%Y-%m-%d')
+            start_var.set(sv)
+            end_var.set(ev)
+            try:
+                start_entry.entry.delete(0, 'end'); start_entry.entry.insert(0, sv)
+                end_entry.entry.delete(0, 'end'); end_entry.entry.insert(0, ev)
+            except Exception:
+                pass
+
+        ttk.Button(quick_row, text="Last 30 Days", command=set_last_30_days).pack(side='left')
+        ttk.Button(quick_row, text="Current Month", command=set_current_month).pack(side='left', padx=(6, 0))
 
         def generate_date_range_report():
-            """Parse dates, filter cases, and show a summary report."""
-            from datetime import datetime
+            """Parse dates, collect cases, and prompt export as PDF or Text."""
             try:
-                start_text = (start_var.get() or '').strip()
-                end_text = (end_var.get() or '').strip()
+                # Prefer StringVar; fall back to the widget text
+                sv_txt = (start_var.get() or '').strip()
+                ev_txt = (end_var.get() or '').strip()
+                if not sv_txt:
+                    try:
+                        sv_txt = (start_entry.entry.get() or '').strip()
+                    except Exception:
+                        pass
+                if not ev_txt:
+                    try:
+                        ev_txt = (end_entry.entry.get() or '').strip()
+                    except Exception:
+                        pass
+                start_text = sv_txt
+                end_text = ev_txt
                 start_dt = datetime.strptime(start_text, '%Y-%m-%d').date() if start_text else None
                 end_dt = datetime.strptime(end_text, '%Y-%m-%d').date() if end_text else None
             except Exception:
                 messagebox.showerror("Invalid Dates", "Please enter dates in YYYY-MM-DD format.")
                 return
 
-            cases = []
             try:
                 cases = get_all_cases_db()
             except Exception:
@@ -1442,7 +1624,6 @@ class CaseLogApp:
                 if not val:
                     return None
                 try:
-                    # accept 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM:SS'
                     s = str(val).strip()
                     return datetime.strptime(s.split()[0], '%Y-%m-%d').date()
                 except Exception:
@@ -1459,15 +1640,120 @@ class CaseLogApp:
                     continue
                 filtered.append(c)
 
-            self.generate_date_range_summary(filtered, start_text or 'Beginning', end_text or 'Today', orientation="Auto")
+            # Prompt to export as PDF or Text instead of opening a preview window
+            choice = Toplevel(win)
+            choice.title("Export Report")
+            choice.transient(win)
             try:
-                win.destroy()
+                choice.grab_set()
             except Exception:
                 pass
+            ttk.Label(choice, text="Choose export format:").pack(padx=16, pady=(12, 8))
 
-        # Action button (Cancel removed; window close button can be used)
+            btns = ttk.Frame(choice)
+            btns.pack(padx=16, pady=(0, 12))
+
+            def do_pdf():
+                try:
+                    self.export_date_range_report_pdf(
+                        filtered,
+                        start_text or 'Beginning',
+                        end_text or 'Today'
+                    )
+                finally:
+                    try:
+                        choice.destroy()
+                    except Exception:
+                        pass
+                    try:
+                        win.destroy()
+                    except Exception:
+                        pass
+
+            def do_text():
+                try:
+                    content_txt = self.build_date_range_text_report(
+                        filtered,
+                        start_text or 'Beginning',
+                        end_text or 'Today'
+                    )
+                    self.export_date_range_report(
+                        content_txt,
+                        start_text or 'Beginning',
+                        end_text or 'Today'
+                    )
+                finally:
+                    try:
+                        choice.destroy()
+                    except Exception:
+                        pass
+                    try:
+                        win.destroy()
+                    except Exception:
+                        pass
+
+            ttk.Button(btns, text="Export as PDF", command=do_pdf).pack(side='left', padx=(0, 8))
+            ttk.Button(btns, text="Export as Text", command=do_text).pack(side='left')
+
+        # Action button
         Button(content, text="Generate Report", command=generate_date_range_report, bg='lightblue').grid(row=4, column=0, columnspan=2, pady=12)
     
+    def build_date_range_text_report(self, cases, start_date, end_date):
+        """Build the plain-text content for the date range report and return it as a string."""
+        from datetime import datetime
+        report_content = f"DATE RANGE REPORT\n"
+        report_content += f"Period: {start_date} to {end_date}\n"
+        report_content += f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        report_content += "="*60 + "\n\n"
+
+        total_cases = len(cases)
+        try:
+            total_gb = sum(safe_float_conversion(c.get('volume_size_gb')) for c in cases)
+        except Exception:
+            total_gb = 0.0
+        total_tb = total_gb / 1024 if total_gb > 999 else None
+        report_content += f"SUMMARY STATISTICS\n"
+        report_content += f"Total Devices: {total_cases}\n"
+        if total_tb:
+            report_content += f"Total Volume: {total_tb:.2f} TB\n\n"
+        else:
+            report_content += f"Total Volume: {total_gb:.2f} GB\n\n"
+
+        examiners = {}
+        agencies = {}
+        offense_types = {}
+        for case in cases:
+            examiner = case.get('examiner', 'Unknown')
+            agency = case.get('agency', 'Unknown')
+            offense = case.get('offense_type', 'Unknown')
+            examiners[examiner] = examiners.get(examiner, 0) + 1
+            agencies[agency] = agencies.get(agency, 0) + 1
+            offense_types[offense] = offense_types.get(offense, 0) + 1
+
+        report_content += "CASES BY EXAMINER\n"
+        report_content += "-" * 30 + "\n"
+        for examiner, count in sorted(examiners.items()):
+            report_content += f"{examiner}: {count}\n"
+
+        report_content += "\nCASES BY AGENCY\n"
+        report_content += "-" * 30 + "\n"
+        for agency, count in sorted(agencies.items()):
+            report_content += f"{agency}: {count}\n"
+
+        report_content += "\nCASES BY OFFENSE TYPE\n"
+        report_content += "-" * 30 + "\n"
+        for offense, count in sorted(offense_types.items()):
+            report_content += f"{offense}: {count}\n"
+
+        report_content += "\nCASE DETAILS\n"
+        report_content += "-" * 30 + "\n"
+        for i, case in enumerate(cases, 1):
+            report_content += f"{i}. Case #{case.get('case_number', 'N/A')} - "
+            report_content += f"{case.get('examiner', 'N/A')} - "
+            report_content += f"{case.get('start_date', 'N/A')}\n"
+
+        return report_content
+
     def generate_date_range_summary(self, cases, start_date, end_date, orientation="Auto"):
         """Generate and display a summary report for the given date range."""
         from tkinter import Toplevel, Text, Scrollbar
@@ -1491,66 +1777,9 @@ class CaseLogApp:
 
         text_widget.pack(side='left', fill='both', expand=True)
         scrollbar.pack(side='right', fill='y')
-        
-        # Generate report content
-        report_content = f"DATE RANGE REPORT\n"
-        report_content += f"Period: {start_date} to {end_date}\n"
-        report_content += f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-        report_content += "="*60 + "\n\n"
-        
-        # Basic statistics
-        total_cases = len(cases)
-        # Compute total volume in GB and auto-switch to TB when > 999 GB
-        try:
-            total_gb = sum(safe_float_conversion(c.get('volume_size_gb')) for c in cases)
-        except Exception:
-            total_gb = 0.0
-        total_tb = total_gb / 1024 if total_gb > 999 else None
-        report_content += f"SUMMARY STATISTICS\n"
-        report_content += f"Total Devices: {total_cases}\n"
-        if total_tb:
-            report_content += f"Total Volume: {total_tb:.2f} TB\n\n"
-        else:
-            report_content += f"Total Volume: {total_gb:.2f} GB\n\n"
-        
-        # Group by examiner
-        examiners = {}
-        agencies = {}
-        offense_types = {}
-        
-        for case in cases:
-            examiner = case.get('examiner', 'Unknown')
-            agency = case.get('agency', 'Unknown')
-            offense = case.get('offense_type', 'Unknown')
-            
-            examiners[examiner] = examiners.get(examiner, 0) + 1
-            agencies[agency] = agencies.get(agency, 0) + 1
-            offense_types[offense] = offense_types.get(offense, 0) + 1
-        
-        # Cases by Examiner
-        report_content += "CASES BY EXAMINER\n"
-        report_content += "-" * 30 + "\n"
-        for examiner, count in sorted(examiners.items()):
-            report_content += f"{examiner}: {count}\n"
-        
-        report_content += "\nCASES BY AGENCY\n"
-        report_content += "-" * 30 + "\n"
-        for agency, count in sorted(agencies.items()):
-            report_content += f"{agency}: {count}\n"
-        
-        report_content += "\nCASES BY OFFENSE TYPE\n"
-        report_content += "-" * 30 + "\n"
-        for offense, count in sorted(offense_types.items()):
-            report_content += f"{offense}: {count}\n"
-        
-        # Case details
-        report_content += "\nCASE DETAILS\n"
-        report_content += "-" * 30 + "\n"
-        for i, case in enumerate(cases, 1):
-            report_content += f"{i}. Case #{case.get('case_number', 'N/A')} - "
-            report_content += f"{case.get('examiner', 'N/A')} - "
-            report_content += f"{case.get('start_date', 'N/A')}\n"
-        
+
+        # Generate report content via helper
+        report_content = self.build_date_range_text_report(cases, start_date, end_date)
         # Insert content
         text_widget.insert('1.0', report_content)
         text_widget.config(state='disabled')  # Make read-only
@@ -3232,7 +3461,7 @@ class CaseLogApp:
         workflow_label.pack(side='top', anchor='w')
         workflow_var = tk.StringVar(value='Intake')
         workflow_combo = ttk.Combobox(workflow_frame, textvariable=workflow_var, 
-                                    values=['Intake', 'Initial Review', 'Processing', 'Analysis', 'Quality Check', 'Final Review', 'Ready for Completion'], 
+                                    values=['Intake', 'Processing', 'Reporting', 'In Vault', 'Ready for Completion'], 
                                     state='readonly', width=20)
         workflow_combo.pack(side='top', fill='x')
         self.entries['workflow_status'] = workflow_var
@@ -5655,8 +5884,14 @@ class CaseLogApp:
     def load_logo_image(self):
         """Loads and scales the logo image for use in the application."""
         try:
-            # Load and scale logo for entry tab
-            image = Image.open(self.logo_path.get())
+            # Normalize to persistent path
+            path = self.logo_path.get() or LOGO_FILENAME
+            # Load and scale logo for entry tab (convert for Tk)
+            image = Image.open(path)
+            try:
+                image = image.convert('RGBA')
+            except Exception:
+                pass
             # Scale to reasonable height (100px) maintaining aspect ratio
             aspect_ratio = image.size[0] / image.size[1]
             new_height = 100
@@ -5671,7 +5906,13 @@ class CaseLogApp:
             # Create smaller version for settings preview
             preview_height = 100
             preview_width = int(preview_height * aspect_ratio)
-            preview_image = image.resize((preview_width, preview_height), Image.Resampling.LANCZOS)
+            # Use original converted image to generate preview to avoid compounding resizes
+            preview_src = Image.open(path)
+            try:
+                preview_src = preview_src.convert('RGBA')
+            except Exception:
+                pass
+            preview_image = preview_src.resize((preview_width, preview_height), Image.Resampling.LANCZOS)
             self.logo_image_tk_preview = ImageTk.PhotoImage(preview_image)
 
             # Update preview in settings if canvas exists
@@ -5681,7 +5922,7 @@ class CaseLogApp:
                 x = (200 - preview_width) // 2  # 200 is canvas width
                 self.logo_preview_canvas.create_image(x, 0, anchor='nw', image=self.logo_image_tk_preview)
 
-            logging.info(f"Logo loaded successfully from {self.logo_path.get()}")
+            logging.info(f"Logo loaded successfully from {path}")
         except Exception as e:
             logging.warning(f"Could not load logo image: {e}")
             # Clear existing images if load fails
@@ -5696,8 +5937,13 @@ class CaseLogApp:
     def load_marker_icon_image(self):
         """Loads and scales the marker icon image for use in the application."""
         try:
-            # Load and scale marker icon for map markers
-            image = Image.open(MARKER_ICON_FILENAME)
+            # Load from persistent path; convert for Tk
+            path = MARKER_ICON_FILENAME
+            image = Image.open(path)
+            try:
+                image = image.convert('RGBA')
+            except Exception:
+                pass
             # Scale to 20x20 for map markers
             map_image = image.resize((20, 20), Image.Resampling.LANCZOS)
             self.marker_icon_tk_map = ImageTk.PhotoImage(map_image)
@@ -5718,7 +5964,7 @@ class CaseLogApp:
             global DEFAULT_MARKER_ICON
             DEFAULT_MARKER_ICON = self.marker_icon_tk_map
 
-            logging.info(f"Marker icon loaded successfully from {MARKER_ICON_FILENAME}")
+            logging.info(f"Marker icon loaded successfully from {path}")
         except Exception as e:
             logging.warning(f"Could not load marker icon image: {e}")
             # Clear existing images if load fails
@@ -6209,17 +6455,37 @@ class CaseLogApp:
             return  # User cancelled
             
         try:
-            # Copy selected file to app_data directory as logo.png
-            img = Image.open(filename)
-            img.save(LOGO_FILENAME, 'PNG')  # Always save as PNG
-            
+            # Ensure persistent directory exists
+            os.makedirs(DATA_DIR, exist_ok=True)
+            # Load selected image and convert to a safe mode for PNG
+            with Image.open(filename) as img:
+                try:
+                    # Convert palette/CMYK/LA/etc. to RGBA for consistent transparency handling
+                    if img.mode not in ("RGB", "RGBA"):
+                        img = img.convert("RGBA")
+                except Exception:
+                    pass
+                # Save atomically to avoid partial writes
+                tmp_path = LOGO_FILENAME + ".tmp"
+                img.save(tmp_path, 'PNG')
+            try:
+                if os.path.exists(LOGO_FILENAME):
+                    os.replace(tmp_path, LOGO_FILENAME)
+                else:
+                    os.rename(tmp_path, LOGO_FILENAME)
+            finally:
+                try:
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                except Exception:
+                    pass
             # Update logo path and reload
             self.logo_path.set(LOGO_FILENAME)
             self.load_logo_image()
-            
-            logging.info(f"New logo selected and saved: {filename}")
+
+            logging.info(f"New logo selected and saved: {filename} -> {LOGO_FILENAME}")
             self.update_status("Logo updated successfully.")
-            
+
         except Exception as e:
             logging.error(f"Error setting new logo: {e}")
             Messagebox.show_error(
@@ -6248,20 +6514,39 @@ class CaseLogApp:
             return  # User cancelled
             
         try:
-            # Copy selected file to app_data directory as marker_icon.png
-            img = Image.open(filename)
-            img.save(MARKER_ICON_FILENAME, 'PNG')  # Always save as PNG
-            
+            # Ensure persistent directory exists
+            os.makedirs(DATA_DIR, exist_ok=True)
+            # Load selected image and convert to safe mode
+            with Image.open(filename) as img:
+                try:
+                    if img.mode not in ("RGB", "RGBA"):
+                        img = img.convert("RGBA")
+                except Exception:
+                    pass
+                # Save atomically
+                tmp_path = MARKER_ICON_FILENAME + ".tmp"
+                img.save(tmp_path, 'PNG')
+            try:
+                if os.path.exists(MARKER_ICON_FILENAME):
+                    os.replace(tmp_path, MARKER_ICON_FILENAME)
+                else:
+                    os.rename(tmp_path, MARKER_ICON_FILENAME)
+            finally:
+                try:
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                except Exception:
+                    pass
             # Reload marker icon
             self.load_marker_icon_image()
-            
+
             # If map is loaded, refresh markers with new icon
             if hasattr(self, 'map_widget'):
                 self.load_map_markers()
-            
-            logging.info(f"New marker icon selected and saved: {filename}")
+
+            logging.info(f"New marker icon selected and saved: {filename} -> {MARKER_ICON_FILENAME}")
             self.update_status("Marker icon updated successfully.")
-            
+
         except Exception as e:
             logging.error(f"Error setting new marker icon: {e}")
             Messagebox.show_error(
