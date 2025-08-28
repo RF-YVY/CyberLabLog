@@ -2,7 +2,7 @@ Download exe from releases, place into a folder on your PC.  Create shortcut to 
 - Please report any bugs.  
 - Future fix: When customizing columns in view data, your selection/deselection only goes into effect after closing and relaunching application. Fix: Have UI view auto refresh on applying.  
 - Future fix: Settings UI shows default password as *password* actual default password is ***admin*** until user changes it.
-- Application on launch looks for new updates, manually check in settings view. If update available, link to github page for new release.  
+- Future fix: Update About section to reflect current version number of application (v2.1.4)    
 - Recommend to back up data before updating for good practice.  
 - **If updating to new version, simply replace the exe where you saved it before, leaving the database folder and file will auto populate application with your previous data.**  
   
