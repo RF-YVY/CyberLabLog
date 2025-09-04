@@ -1,3 +1,9 @@
+﻿
+# IMPORTANT: Increment APP_VERSION and update RELEASE_DATE before each build for distribution!
+
+# Example:
+# APP_VERSION = "2.1.2"
+# RELEASE_DATE = "Sep 3, 2025"
 
 # --- Move Report Header Info Persistence into CaseLogApp ---
 
@@ -8,7 +14,7 @@
 
 
 import ttkbootstrap as tb
-from ttkbootstrap.constants import *
+from ttkbootstrap.constants import LEFT, RIGHT, TOP, BOTTOM, X, Y, BOTH, CENTER, W, E, N, S # Add/remove as needed
 from ttkbootstrap.dialogs import Messagebox
 from ttkbootstrap.widgets import DateEntry
 import json
@@ -36,7 +42,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import tkintermapview
 from tkintermapview import decimal_to_osm
 from geopy.geocoders import Nominatim
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as ReportLabImage, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as ReportLabImage
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.pagesizes import letter, landscape
 from reportlab.lib import colors
@@ -46,7 +52,8 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 import pandas as pd
 # --- App Constants & Paths ---
 APP_NAME = "CyberLab Case Tracker"
-APP_VERSION = "2.1.1"
+APP_VERSION = "2.1.5"  # Increment before each build
+RELEASE_DATE = "Sep 3, 2025"  # Update before each build
 # Determine a persistent base directory:
 # - When frozen by PyInstaller (--onefile), use the folder containing the executable
 #   so data (DB, app_data) persists across runs.
@@ -1136,6 +1143,127 @@ def safe_float_conversion(value):
 
 
 class CaseLogApp:
+    def create_in_progress_widgets(self):
+        """Creates the widgets for the In Progress tab (Treeview, buttons, search/filter bar)."""
+        container = ttk.Frame(self.in_progress_frame)
+        container.grid(row=0, column=0, sticky='nsew')
+        self.in_progress_frame.rowconfigure(0, weight=1)
+        self.in_progress_frame.columnconfigure(0, weight=1)
+
+        # --- Search/Filter Bar ---
+        search_frame = ttk.Frame(container)
+        search_frame.grid(row=0, column=0, sticky='ew', pady=(5, 0), padx=5)
+        ttk.Label(search_frame, text="Search/Filter:").pack(side='left', padx=(0, 5))
+        self.in_progress_search_var = tk.StringVar()
+        search_entry = ttk.Entry(search_frame, textvariable=self.in_progress_search_var, width=30)
+        search_entry.pack(side='left', padx=(0, 5))
+        search_button = ttk.Button(search_frame, text="Apply", command=self.apply_in_progress_filter)
+        search_button.pack(side='left')
+        clear_button = ttk.Button(search_frame, text="Clear", command=self.clear_in_progress_filter)
+        clear_button.pack(side='left', padx=(5, 0))
+        # Priority filter
+        ttk.Label(search_frame, text="Priority:").pack(side='left', padx=(10, 5))
+        self.priority_filter_var = tk.StringVar(value='All')
+        priority_combo = ttk.Combobox(search_frame, textvariable=self.priority_filter_var, values=['All', 'Critical', 'High', 'Medium', 'Low'], state='readonly', width=10)
+        priority_combo.pack(side='left', padx=(0, 5))
+        priority_combo.bind('<<ComboboxSelected>>', lambda e: self.apply_in_progress_filter())
+        search_entry.bind('<Return>', lambda e: self.apply_in_progress_filter())
+
+        # --- Button Bar ---
+        button_frame = ttk.Frame(container)
+        button_frame.grid(row=1, column=0, sticky='ew', pady=(0, 10), padx=5)
+        refresh_button = ttk.Button(button_frame, text="Refresh", command=self.refresh_in_progress_view)
+        refresh_button.pack(side='left', padx=(0, 5))
+        bulk_priority_btn = ttk.Button(button_frame, text="Bulk Set Priority", command=self.bulk_set_priority)
+        bulk_priority_btn.pack(side='left', padx=(0, 5))
+        bulk_complete_btn = ttk.Button(button_frame, text="Bulk Complete", command=self.bulk_mark_completed, style="Accent.TButton")
+        bulk_complete_btn.pack(side='left', padx=(0, 5))
+        delete_button = ttk.Button(button_frame, text="Delete Selected", command=self.delete_selected_in_progress_cases, style="Danger.TButton")
+        delete_button.pack(side='left', padx=(0, 5))
+        mark_complete_btn = ttk.Button(button_frame, text="Mark as Completed", command=self.mark_case_as_completed)
+        mark_complete_btn.pack(side='left', padx=(0, 5))
+
+        # --- Treeview ---
+        tree_frame = ttk.Frame(container)
+        tree_frame.grid(row=2, column=0, sticky='nsew', padx=5, pady=5)
+        container.rowconfigure(2, weight=1)
+        container.columnconfigure(0, weight=1)
+
+        self.in_progress_tree = ttk.Treeview(tree_frame, show='headings')
+        self.in_progress_tree_columns_config = {
+            'id': {'text': 'ID', 'width': 50},
+            'priority': {'text': 'Priority', 'width': 80},
+            'workflow_status': {'text': 'Status', 'width': 120},
+            'case_number': {'text': 'Case #', 'width': 120},
+            'examiner': {'text': 'Examiner', 'width': 120},
+            'investigator': {'text': 'Investigator', 'width': 120},
+            'agency': {'text': 'Agency', 'width': 120},
+            'city_of_offense': {'text': 'City', 'width': 100},
+            'state_of_offense': {'text': 'State', 'width': 60},
+            'start_date': {'text': 'Start Date', 'width': 100},
+            'end_date': {'text': 'End Date', 'width': 100},
+            'target_due_date': {'text': 'Due Date', 'width': 100},
+            'volume_size_gb': {'text': 'Volume (GB)', 'width': 100},
+            'offense_type': {'text': 'Offense Type', 'width': 120},
+            'device_type': {'text': 'Device Type', 'width': 100},
+            'model': {'text': 'Model', 'width': 100},
+            'os': {'text': 'OS', 'width': 80},
+            'data_recovered': {'text': 'Data Recovered?', 'width': 120},
+            'fpr_complete': {'text': 'FPR Complete?', 'width': 120},
+            'notes': {'text': 'Notes', 'width': 200},
+            'created_at': {'text': 'Created', 'width': 150}
+        }
+        all_columns = list(self.in_progress_tree_columns_config.keys())
+        self.in_progress_tree['columns'] = all_columns
+        for col in all_columns:
+            config = self.in_progress_tree_columns_config[col]
+            self.in_progress_tree.heading(col, text=config['text'])
+            if col == 'id':
+                self.in_progress_tree.column(col, width=0, minwidth=0, stretch=False)
+                self.in_progress_tree.heading(col, text='')
+            else:
+                self.in_progress_tree.column(col, width=config['width'], minwidth=50)
+
+        # Scrollbars
+        v_scrollbar = ttk.Scrollbar(tree_frame, orient='vertical', command=self.in_progress_tree.yview)
+        v_scrollbar.grid(row=0, column=1, sticky='ns')
+        self.in_progress_tree.configure(yscrollcommand=v_scrollbar.set)
+        h_scrollbar = ttk.Scrollbar(tree_frame, orient='horizontal', command=self.in_progress_tree.xview)
+        h_scrollbar.grid(row=1, column=0, sticky='ew')
+        self.in_progress_tree.configure(xscrollcommand=h_scrollbar.set)
+
+        self.in_progress_tree.grid(row=0, column=0, sticky='nsew')
+        tree_frame.rowconfigure(0, weight=1)
+        tree_frame.columnconfigure(0, weight=1)
+
+        # Bind events
+        self.in_progress_tree.bind('<Double-1>', lambda e: self.edit_selected_in_progress_case())
+        self.in_progress_tree.bind('<Return>', lambda e: self.edit_selected_in_progress_case())
+        self.in_progress_tree.bind('<Delete>', lambda e: self.delete_selected_in_progress_cases())
+
+        # Initial data load
+        self.refresh_in_progress_view()
+    def check_for_updates(self, silent=False):
+        """Check GitHub for a newer release version."""
+        import threading, requests
+        def do_check():
+            try:
+                url = "https://api.github.com/repos/RF-YVY/CyberLabLog/releases/latest"
+                resp = requests.get(url, timeout=5)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    latest_version = data.get('tag_name') or data.get('name')
+                    if latest_version and latest_version.lstrip('v') > APP_VERSION:
+                        msg = f"A new version ({latest_version}) is available on GitHub.\nVisit https://github.com/RF-YVY/CyberLabLog to download."
+                        self.root.after(0, lambda: messagebox.showinfo("Update Available", msg))
+                    elif not silent:
+                        self.root.after(0, lambda: messagebox.showinfo("No Update", "You are running the latest version."))
+                elif not silent:
+                    self.root.after(0, lambda: messagebox.showwarning("Update Check Failed", "Could not check for updates (GitHub API error)."))
+            except Exception as e:
+                if not silent:
+                    self.root.after(0, lambda: messagebox.showwarning("Update Check Failed", f"Could not check for updates: {e}"))
+        threading.Thread(target=do_check, daemon=True).start()
     # Lazy-loading page size for the View Data Treeview
     LAZY_PAGE_SIZE = 200
     def _show_report_saved_dialog(self, filename: str, tone: str = "snarky"):
@@ -1382,8 +1510,8 @@ class CaseLogApp:
         # Use geopy to get the center of the state
         try:
             geolocator = Nominatim(user_agent=APP_NAME)
-            location = geolocator.geocode(f"{state}, USA", timeout=10)
-            if location:
+            location = geolocator.geocode(f"{state}, USA")
+            if location and hasattr(location, 'latitude') and hasattr(location, 'longitude'):
                 self.map_widget.set_position(location.latitude, location.longitude)
                 self.map_widget.set_zoom(6)  # Reasonable zoom for a state
         except Exception as e:
@@ -1450,6 +1578,12 @@ class CaseLogApp:
         """Refresh the Treeview with lazy loading support."""
         if not hasattr(self, 'tree') or self.tree is None:
             return
+        # Re-apply visible columns instantly after user changes column selection
+        visible_columns = self.get_visible_treeview_columns()
+        try:
+            self.tree.configure(displaycolumns=visible_columns)
+        except Exception:
+            pass
         # Use existing filter string if none provided
         if filter_text is None:
             filter_text = getattr(self, '_view_filter_string', '') if hasattr(self, '_view_filter_string') else ''
@@ -1514,15 +1648,16 @@ class CaseLogApp:
             self.load_next_lazy_page()
     
     def show_date_range_report(self):
-        """Show dialog for date range report options and generate filtered case reports."""
+        """Show dialog for date range report with option to include in-progress cases."""
         from tkinter import Toplevel, Label, Button, StringVar, ttk, messagebox
         from datetime import datetime, timedelta
+        import calendar as _cal
 
         win = Toplevel(self.root)
         win.title("Date Range Report")
-        win.geometry("480x360")
+        win.geometry("520x380")
         try:
-            win.minsize(460, 340)
+            win.minsize(500, 360)
         except Exception:
             pass
         win.grab_set()
@@ -1534,7 +1669,7 @@ class CaseLogApp:
         content.pack(anchor='center', padx=10, pady=10)
 
         # Date range selection
-        Label(content, text="Date Range Report", font=('TkDefaultFont', 12, 'bold')).grid(row=0, column=0, columnspan=2, pady=(10, 15))
+        Label(content, text="Date Range Report", font=('TkDefaultFont', 12, 'bold')).grid(row=0, column=0, columnspan=3, pady=(10, 15))
 
         Label(content, text="Start Date:").grid(row=1, column=0, sticky='w', padx=10, pady=5)
         start_var = StringVar(value="")
@@ -1556,7 +1691,7 @@ class CaseLogApp:
 
         # Quick date selections (single row)
         quick_row = ttk.Frame(content)
-        quick_row.grid(row=3, column=0, columnspan=2, pady=(10, 5))
+        quick_row.grid(row=3, column=0, columnspan=3, pady=(6, 10), sticky='w')
         Label(quick_row, text="Quick:").pack(side='left', padx=(0, 6))
 
         def set_last_30_days():
@@ -1575,7 +1710,6 @@ class CaseLogApp:
         def set_current_month():
             today = datetime.now().date()
             first = today.replace(day=1)
-            import calendar as _cal
             last_day = _cal.monthrange(today.year, today.month)[1]
             last = today.replace(day=last_day)
             sv = first.strftime('%Y-%m-%d')
@@ -1588,141 +1722,134 @@ class CaseLogApp:
             except Exception:
                 pass
 
-        ttk.Button(quick_row, text="Last 30 Days", command=set_last_30_days).pack(side='left')
-        ttk.Button(quick_row, text="Current Month", command=set_current_month).pack(side='left', padx=(6, 0))
+        ttk.Button(quick_row, text="Last 30 Days", command=set_last_30_days).pack(side='left', padx=4)
+        ttk.Button(quick_row, text="Current Month", command=set_current_month).pack(side='left', padx=4)
+
+        # Data source selection
+        src_row = ttk.LabelFrame(content, text="Data Source")
+        src_row.grid(row=4, column=0, columnspan=3, padx=10, pady=(0, 10), sticky='w')
+        src_var = StringVar(value="completed")
+        ttk.Radiobutton(src_row, text="Completed", value="completed", variable=src_var).pack(side='left', padx=(6, 8), pady=4)
+        ttk.Radiobutton(src_row, text="In-Progress Only", value="inprogress", variable=src_var).pack(side='left', padx=8, pady=4)
+        ttk.Radiobutton(src_row, text="Both", value="both", variable=src_var).pack(side='left', padx=8, pady=4)
+
+        # Output selection
+        out_row = ttk.LabelFrame(content, text="Output")
+        out_row.grid(row=5, column=0, columnspan=3, padx=10, pady=(0, 10), sticky='w')
+        out_var = StringVar(value="pdf")
+        ttk.Radiobutton(out_row, text="PDF (save)", value="pdf", variable=out_var).pack(side='left', padx=(6, 8), pady=4)
+        ttk.Radiobutton(out_row, text="Preview (Text + PDF export)", value="preview", variable=out_var).pack(side='left', padx=8, pady=4)
 
         def generate_date_range_report():
-            """Parse dates, collect cases, and prompt export as PDF or Text."""
+            # Validate dates
+            sv = (start_var.get() or "").strip()
+            ev = (end_var.get() or "").strip()
+            if not sv or not ev:
+                try:
+                    messagebox.showerror("Invalid Dates", "Please select both start and end dates.")
+                except Exception:
+                    pass
+                return
             try:
-                # Prefer StringVar; fall back to the widget text
-                sv_txt = (start_var.get() or '').strip()
-                ev_txt = (end_var.get() or '').strip()
-                if not sv_txt:
-                    try:
-                        sv_txt = (start_entry.entry.get() or '').strip()
-                    except Exception:
-                        pass
-                if not ev_txt:
-                    try:
-                        ev_txt = (end_entry.entry.get() or '').strip()
-                    except Exception:
-                        pass
-                start_text = sv_txt
-                end_text = ev_txt
-                start_dt = datetime.strptime(start_text, '%Y-%m-%d').date() if start_text else None
-                end_dt = datetime.strptime(end_text, '%Y-%m-%d').date() if end_text else None
+                sd = datetime.strptime(sv[:10], '%Y-%m-%d')
+                ed = datetime.strptime(ev[:10], '%Y-%m-%d')
             except Exception:
-                messagebox.showerror("Invalid Dates", "Please enter dates in YYYY-MM-DD format.")
+                try:
+                    messagebox.showerror("Invalid Dates", "Dates must be in YYYY-MM-DD format.")
+                except Exception:
+                    pass
+                return
+            # Fetch and filter
+            selected = src_var.get()
+            completed_cases = []
+            try:
+                for c in get_all_cases_db() or []:
+                    d_raw = c.get('start_date') or c.get('created_at')
+                    if not d_raw:
+                        continue
+                    try:
+                        dt = datetime.strptime(str(d_raw)[:10], '%Y-%m-%d')
+                    except Exception:
+                        continue
+                    if sd <= dt <= ed:
+                        completed_cases.append(c)
+            except Exception:
+                completed_cases = []
+
+            inprog_cases = []
+            try:
+                for c in get_all_in_progress_cases_db() or []:
+                    d_raw = c.get('created_at')
+                    if not d_raw:
+                        continue
+                    try:
+                        dt = datetime.strptime(str(d_raw)[:10], '%Y-%m-%d')
+                    except Exception:
+                        continue
+                    if sd <= dt <= ed:
+                        inprog_cases.append(c)
+            except Exception:
+                inprog_cases = []
+
+            # Choose dataset(s)
+            if selected == "completed":
+                cases_for_view = completed_cases
+                inprog_for_view = None
+            elif selected == "inprogress":
+                cases_for_view = []
+                inprog_for_view = inprog_cases
+            else:
+                cases_for_view = completed_cases
+                inprog_for_view = inprog_cases
+
+            if not cases_for_view and not inprog_for_view:
+                Messagebox.show_info("Date Range Report", "No cases found in the selected range.")
                 return
 
-            try:
-                cases = get_all_cases_db()
-            except Exception:
-                cases = []
-
-            def parse_case_date(val):
-                if not val:
-                    return None
+            # Output action
+            if out_var.get() == "pdf":
                 try:
-                    s = str(val).strip()
-                    return datetime.strptime(s.split()[0], '%Y-%m-%d').date()
-                except Exception:
-                    return None
-
-            filtered = []
-            for c in cases:
-                d = parse_case_date(c.get('start_date')) or parse_case_date(c.get('created_at'))
-                if d is None:
-                    continue
-                if start_dt and d < start_dt:
-                    continue
-                if end_dt and d > end_dt:
-                    continue
-                filtered.append(c)
-
-            # Prompt to export as PDF or Text instead of opening a preview window
-            choice = Toplevel(win)
-            choice.title("Export Report")
-            choice.transient(win)
-            try:
-                choice.grab_set()
-            except Exception:
-                pass
-            ttk.Label(choice, text="Choose export format:").pack(padx=16, pady=(12, 8))
-
-            btns = ttk.Frame(choice)
-            btns.pack(padx=16, pady=(0, 12))
-
-            def do_pdf():
-                try:
-                    self.export_date_range_report_pdf(
-                        filtered,
-                        start_text or 'Beginning',
-                        end_text or 'Today'
-                    )
+                    self.export_date_range_report_pdf(cases_for_view, sv, ev, in_progress_cases=inprog_for_view)
                 finally:
-                    try:
-                        choice.destroy()
-                    except Exception:
-                        pass
                     try:
                         win.destroy()
                     except Exception:
                         pass
-
-            def do_text():
-                try:
-                    content_txt = self.build_date_range_text_report(
-                        filtered,
-                        start_text or 'Beginning',
-                        end_text or 'Today'
-                    )
-                    self.export_date_range_report(
-                        content_txt,
-                        start_text or 'Beginning',
-                        end_text or 'Today'
-                    )
-                finally:
-                    try:
-                        choice.destroy()
-                    except Exception:
-                        pass
-                    try:
-                        win.destroy()
-                    except Exception:
-                        pass
-
-            ttk.Button(btns, text="Export as PDF", command=do_pdf).pack(side='left', padx=(0, 8))
-            ttk.Button(btns, text="Export as Text", command=do_text).pack(side='left')
+            else:
+                # Open preview (text) with export button
+                self.generate_date_range_summary(cases_for_view, sv, ev, in_progress_cases=inprog_for_view)
 
         # Action button
-        Button(content, text="Generate Report", command=generate_date_range_report, bg='lightblue').grid(row=4, column=0, columnspan=2, pady=12)
+        Button(content, text="Generate Report", command=generate_date_range_report, bg='lightblue').grid(row=6, column=0, columnspan=3, pady=12)
     
-    def build_date_range_text_report(self, cases, start_date, end_date):
-        """Build the plain-text content for the date range report and return it as a string."""
+    def build_date_range_text_report(self, cases, start_date, end_date, in_progress_cases=None):
+        """Build and return plain-text content for the date range report.
+        If in_progress_cases is provided, totals cover both sets and an extra section is added.
+        """
         from datetime import datetime
-        report_content = f"DATE RANGE REPORT\n"
+        report_content = "DATE RANGE REPORT\n"
         report_content += f"Period: {start_date} to {end_date}\n"
         report_content += f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-        report_content += "="*60 + "\n\n"
+        report_content += "=" * 60 + "\n\n"
 
-        total_cases = len(cases)
+        in_progress_cases = in_progress_cases or []
+        all_cases = list(cases) + list(in_progress_cases)
+        total_cases = len(all_cases)
         try:
-            total_gb = sum(safe_float_conversion(c.get('volume_size_gb')) for c in cases)
+            total_gb = sum(safe_float_conversion(c.get('volume_size_gb')) for c in all_cases)
         except Exception:
             total_gb = 0.0
         total_tb = total_gb / 1024 if total_gb > 999 else None
-        report_content += f"SUMMARY STATISTICS\n"
+
+        report_content += "SUMMARY STATISTICS\n"
         report_content += f"Total Devices: {total_cases}\n"
         if total_tb:
             report_content += f"Total Volume: {total_tb:.2f} TB\n\n"
         else:
             report_content += f"Total Volume: {total_gb:.2f} GB\n\n"
 
-        examiners = {}
-        agencies = {}
-        offense_types = {}
-        for case in cases:
+        examiners, agencies, offense_types = {}, {}, {}
+        for case in all_cases:
             examiner = case.get('examiner', 'Unknown')
             agency = case.get('agency', 'Unknown')
             offense = case.get('offense_type', 'Unknown')
@@ -1745,16 +1872,24 @@ class CaseLogApp:
         for offense, count in sorted(offense_types.items()):
             report_content += f"{offense}: {count}\n"
 
-        report_content += "\nCASE DETAILS\n"
+        report_content += "\nCOMPLETED CASE DETAILS\n"
         report_content += "-" * 30 + "\n"
         for i, case in enumerate(cases, 1):
             report_content += f"{i}. Case #{case.get('case_number', 'N/A')} - "
             report_content += f"{case.get('examiner', 'N/A')} - "
             report_content += f"{case.get('start_date', 'N/A')}\n"
 
+        if in_progress_cases:
+            report_content += "\nIN-PROGRESS CASE DETAILS\n"
+            report_content += "-" * 30 + "\n"
+            for i, case in enumerate(in_progress_cases, 1):
+                report_content += f"{i}. Case #{case.get('case_number', 'N/A')} - "
+                report_content += f"{case.get('examiner', 'N/A')} - "
+                report_content += f"{case.get('created_at', 'N/A')}\n"
+
         return report_content
 
-    def generate_date_range_summary(self, cases, start_date, end_date, orientation="Auto"):
+    def generate_date_range_summary(self, cases, start_date, end_date, orientation="Auto", in_progress_cases=None):
         """Generate and display a summary report for the given date range."""
         from tkinter import Toplevel, Text, Scrollbar
 
@@ -1779,7 +1914,7 @@ class CaseLogApp:
         scrollbar.pack(side='right', fill='y')
 
         # Generate report content via helper
-        report_content = self.build_date_range_text_report(cases, start_date, end_date)
+        report_content = self.build_date_range_text_report(cases, start_date, end_date, in_progress_cases=in_progress_cases)
         # Insert content
         text_widget.insert('1.0', report_content)
         text_widget.config(state='disabled')  # Make read-only
@@ -1794,7 +1929,7 @@ class CaseLogApp:
         export_btn = ttk.Button(
             btn_bar,
             text="Export to PDF",
-            command=lambda: self.export_date_range_report_pdf(cases, start_date, end_date)
+            command=lambda: self.export_date_range_report_pdf(cases, start_date, end_date, in_progress_cases=in_progress_cases)
         )
         export_btn.pack(side='right', padx=(0,10))
     
@@ -1807,7 +1942,7 @@ class CaseLogApp:
             filename = filedialog.asksaveasfilename(
                 defaultextension=".txt",
                 filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
-                initialname=f"date_range_report_{start_date}_to_{end_date}.txt"
+                initialfile=f"date_range_report_{start_date}_to_{end_date}.txt"
             )
             
             if filename:
@@ -1817,10 +1952,11 @@ class CaseLogApp:
         except Exception as e:
             messagebox.showerror("Error", f"Failed to export report: {e}")
 
-    def export_date_range_report_pdf(self, cases, start_date, end_date, page_size="Letter", orientation="Portrait"):
-        """Export the date range report to PDF with smart orientation and widths."""
+    def export_date_range_report_pdf(self, cases, start_date, end_date, page_size="Letter", orientation="Portrait", in_progress_cases=None):
+        """Export the date range report to PDF with dynamic widths and optional in-progress section (no forced page breaks)."""
         from tkinter import filedialog
-        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage, PageBreak
+        import os
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
         from reportlab.lib.styles import getSampleStyleSheet
         from reportlab.lib.pagesizes import letter, legal, A4, landscape, portrait
         from reportlab.lib import colors
@@ -1834,27 +1970,17 @@ class CaseLogApp:
         if not filename:
             return
 
-        # Resolve page size and orientation
         size_map = {"Letter": letter, "Legal": legal, "A4": A4}
         base_size = size_map.get(page_size, letter)
+        pagesize = portrait(base_size) if orientation != "Landscape" else landscape(base_size)
         headers = ["#", "Case #", "Start", "Examiner", "Agency", "Offense", "Device"]
-        # Always use portrait
-        pagesize = portrait(base_size)
-        use_landscape = False
 
-        doc = SimpleDocTemplate(
-            filename,
-            pagesize=pagesize,
-            rightMargin=20,
-            leftMargin=20,
-            topMargin=24,
-            bottomMargin=24,
-        )
+        doc = SimpleDocTemplate(filename, pagesize=pagesize, rightMargin=20, leftMargin=20, topMargin=24, bottomMargin=24)
         page_width = pagesize[0] - doc.leftMargin - doc.rightMargin
         styles = getSampleStyleSheet()
         elements = []
 
-        # Header info
+        # Header block
         header_info = self.get_report_header_info()
         header_lines = [
             f"Name: {header_info.get('Name','')}",
@@ -1862,23 +1988,22 @@ class CaseLogApp:
             f"Division: {header_info.get('Division','')}",
             f"Date: {header_info.get('Date','')}"
         ]
-        header_table = Table([[Paragraph(line, styles["Normal"])] for line in header_lines], hAlign='LEFT')
-        elements.append(header_table)
+        elements.append(Table([[Paragraph(line, styles["Normal"])] for line in header_lines], hAlign='LEFT'))
         elements.append(Spacer(1, 10))
 
-        # Title and logo
+        # Title + logo
         try:
             title_para = Paragraph(f"<b>Date Range Report ({start_date} to {end_date})</b>", styles["Title"]) 
             if os.path.exists(LOGO_FILENAME):
-                logo_width = 1.0 * inch
-                img = RLImage(LOGO_FILENAME, width=logo_width, height=logo_width)
-                title_table = Table([[title_para, img]], colWidths=[None, logo_width])
-                title_table.setStyle(TableStyle([
+                logo_w = 1.0 * inch
+                img = RLImage(LOGO_FILENAME, width=logo_w, height=logo_w)
+                title_tbl = Table([[title_para, img]], colWidths=[None, logo_w])
+                title_tbl.setStyle(TableStyle([
                     ("ALIGN", (0,0), (0,0), "LEFT"),
                     ("ALIGN", (1,0), (1,0), "RIGHT"),
                     ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
                 ]))
-                elements.append(title_table)
+                elements.append(title_tbl)
             else:
                 elements.append(title_para)
         except Exception:
@@ -1886,19 +2011,17 @@ class CaseLogApp:
         elements.append(Spacer(1, 12))
 
         # Summary
-        total_cases = len(cases)
-        # Compute total volume with safe conversion and GB/TB auto-switch
+        in_progress_cases = in_progress_cases or []
+        all_cases = list(cases) + list(in_progress_cases)
+        total_cases = len(all_cases)
         try:
-            total_gb = sum(safe_float_conversion(c.get('volume_size_gb')) for c in cases)
+            total_gb = sum(safe_float_conversion(c.get('volume_size_gb')) for c in all_cases)
         except Exception:
             total_gb = 0.0
         total_tb = total_gb / 1024 if total_gb > 999 else None
         elements.append(Paragraph("<b>Summary Statistics</b>", styles["Heading2"]))
         elements.append(Paragraph(f"Total Devices: {total_cases}", styles["Normal"]))
-        if total_tb:
-            elements.append(Paragraph(f"Total Volume: {total_tb:.2f} TB", styles["Normal"]))
-        else:
-            elements.append(Paragraph(f"Total Volume: {total_gb:.2f} GB", styles["Normal"]))
+        elements.append(Paragraph(f"Total Volume: {total_tb:.2f} TB" if total_tb else f"Total Volume: {total_gb:.2f} GB", styles["Normal"]))
         elements.append(Spacer(1, 8))
 
         def group_counts(items, key):
@@ -1909,29 +2032,29 @@ class CaseLogApp:
             return sorted(d.items(), key=lambda kv: (-kv[1], str(kv[0]).lower()))
 
         for key, label in (("examiner", "Cases by Examiner"), ("agency", "Cases by Agency"), ("offense_type", "Cases by Offense Type")):
-            pairs = group_counts(cases, key)
-            if pairs:
-                count_col_w = 1.2 * inch
-                value_col_w = max(1.5 * inch, page_width - count_col_w)
-                t = Table([["Value", "Count"]] + [[k, v] for k, v in pairs], colWidths=[value_col_w, count_col_w])
-                t.setStyle(TableStyle([
-                    ("BACKGROUND", (0,0), (-1,0), colors.whitesmoke),
-                    ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
-                    ("ALIGN", (1,1), (1,-1), "RIGHT"),
-                    ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
-                    ("FONTSIZE", (0,0), (-1,-1), 9),
-                ]))
-                elements.append(Paragraph(f"<b>{label}</b>", styles["Heading3"]))
-                elements.append(t)
-                elements.append(Spacer(1, 10))
+            pairs = group_counts(all_cases, key)
+            if not pairs:
+                continue
+            cnt_w = 1.2 * inch
+            val_w = max(1.5 * inch, page_width - cnt_w)
+            tbl = Table([["Value", "Count"]] + [[k, v] for k, v in pairs], colWidths=[val_w, cnt_w])
+            tbl.setStyle(TableStyle([
+                ("BACKGROUND", (0,0), (-1,0), colors.whitesmoke),
+                ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+                ("ALIGN", (1,1), (1,-1), "RIGHT"),
+                ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
+                ("FONTSIZE", (0,0), (-1,-1), 9),
+            ]))
+            elements.append(Paragraph(f"<b>{label}</b>", styles["Heading3"]))
+            elements.append(tbl)
+            elements.append(Spacer(1, 8))
 
-        # Details table
-        elements.append(PageBreak())
-        elements.append(Paragraph("<b>Case Details</b>", styles["Heading2"]))
+        # Completed details (no forced page break)
+        elements.append(Paragraph("<b>Completed Case Details</b>", styles["Heading2"]))
         rows = [headers]
         for i, c in enumerate(cases, 1):
             rows.append([
-                i,
+                str(i),
                 c.get('case_number', ''),
                 format_date_str_for_display(c.get('start_date') or c.get('created_at', '')),
                 c.get('examiner', ''),
@@ -1940,37 +2063,79 @@ class CaseLogApp:
                 c.get('device_type', ''),
             ])
 
-        # Dynamic widths
         min_w = 0.4 * inch
-        max_w = (2.5 if use_landscape else 2.0) * inch
-        col_weights = []
+        max_w = 2.0 * inch
+        weights = []
         for ci in range(len(headers)):
             max_len = len(str(rows[0][ci]))
             for r in rows[1:]:
                 val = '' if ci >= len(r) or r[ci] is None else str(r[ci])
                 if len(val) > max_len:
                     max_len = len(val)
-            col_weights.append(max(0.6, min(3.0, max_len / 10)))
-        total_weight = sum(col_weights) or 1.0
-        raw_widths = [(w / total_weight) * page_width for w in col_weights]
-        col_widths = [max(min_w, min(max_w, w)) for w in raw_widths]
-        total_w = sum(col_widths)
-        if total_w < page_width:
-            gap = page_width - total_w
-            widest_idx = max(range(len(col_widths)), key=lambda i: col_widths[i])
-            col_widths[widest_idx] += gap
-
-        details_table = Table(rows, colWidths=col_widths, repeatRows=1, splitByRow=True)
-        details_table.setStyle(TableStyle([
+            weights.append(max(0.6, min(3.0, max_len / 10)))
+        tw = sum(weights) or 1.0
+        widths = [(w / tw) * page_width for w in weights]
+        col_widths = [max(min_w, min(max_w, w)) for w in widths]
+        extra = page_width - sum(col_widths)
+        if extra > 0:
+            j = max(range(len(col_widths)), key=lambda i: col_widths[i])
+            col_widths[j] += extra
+        tbl_completed = Table(rows, colWidths=col_widths, repeatRows=1, splitByRow=True)
+        tbl_completed.setStyle(TableStyle([
             ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
             ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
             ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
             ("FONTSIZE", (0,0), (-1,-1), 8),
             ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
         ]))
-        elements.append(details_table)
+        elements.append(tbl_completed)
 
-        # Build
+        # In-Progress details (no forced page break)
+        if in_progress_cases:
+            elements.append(Paragraph("<b>In-Progress Case Details</b>", styles["Heading2"]))
+            ip_headers = ["#", "Case #", "Created", "Examiner", "Agency", "Offense", "Device", "Priority", "Workflow", "Target Due"]
+            ip_rows = [ip_headers]
+            for i, c in enumerate(in_progress_cases, 1):
+                ip_rows.append([
+                    str(i),
+                    c.get('case_number', ''),
+                    format_date_str_for_display(c.get('created_at', '')),
+                    c.get('examiner', ''),
+                    c.get('agency', ''),
+                    c.get('offense_type', ''),
+                    c.get('device_type', ''),
+                    c.get('priority', ''),
+                    c.get('workflow_status', ''),
+                    format_date_str_for_display(c.get('target_due_date', '')),
+                ])
+
+            min_w = 0.4 * inch
+            max_w = 2.2 * inch
+            weights = []
+            for ci in range(len(ip_headers)):
+                max_len = len(str(ip_rows[0][ci]))
+                for r in ip_rows[1:]:
+                    val = '' if ci >= len(r) or r[ci] is None else str(r[ci])
+                    if len(val) > max_len:
+                        max_len = len(val)
+                weights.append(max(0.6, min(3.0, max_len / 10)))
+            tw = sum(weights) or 1.0
+            widths = [(w / tw) * page_width for w in weights]
+            ip_col_widths = [max(min_w, min(max_w, w)) for w in widths]
+            extra = page_width - sum(ip_col_widths)
+            if extra > 0:
+                j = max(range(len(ip_col_widths)), key=lambda i: ip_col_widths[i])
+                ip_col_widths[j] += extra
+            tbl_ip = Table(ip_rows, colWidths=ip_col_widths, repeatRows=1, splitByRow=True)
+            tbl_ip.setStyle(TableStyle([
+                ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
+                ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+                ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
+                ("FONTSIZE", (0,0), (-1,-1), 8),
+                ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+            ]))
+            elements.append(tbl_ip)
+
         try:
             doc.build(elements)
             self._show_report_saved_dialog(filename)
@@ -2090,42 +2255,71 @@ class CaseLogApp:
         win.title("All Cases Summary")
         win.grab_set()
 
-        Label(win, text="Export format:").grid(row=0, column=0, padx=10, pady=(10,5), sticky='w')
+        # Configure grid for better spacing
+        try:
+            for c in range(0, 4):
+                win.grid_columnconfigure(c, weight=1)
+        except Exception:
+            pass
+
+        # Export format (radiobuttons)
+        fmt_group = ttk.LabelFrame(win, text="Export Format")
+        fmt_group.grid(row=0, column=0, columnspan=4, padx=10, pady=(10,5), sticky='we')
         fmt_var = StringVar(value="PDF")
-        Button(win, text="PDF", command=lambda: fmt_var.set("PDF")).grid(row=0, column=1, padx=5, pady=(10,5), sticky='w')
-        Button(win, text="Excel (XLSX)", command=lambda: fmt_var.set("XLSX")).grid(row=0, column=2, padx=5, pady=(10,5), sticky='w')
+        ttk.Radiobutton(fmt_group, text="PDF", variable=fmt_var, value="PDF").pack(side='left', padx=10, pady=6)
+        ttk.Radiobutton(fmt_group, text="Excel (XLSX)", variable=fmt_var, value="XLSX").pack(side='left', padx=10, pady=6)
+
+        # Data source selection (Completed / In-Progress / Both)
+        src_group = ttk.LabelFrame(win, text="Data Source")
+        src_group.grid(row=1, column=0, columnspan=4, padx=10, pady=(5,5), sticky='we')
+        src_var = StringVar(value="completed")
+        ttk.Radiobutton(src_group, text="Completed", variable=src_var, value="completed").pack(side='left', padx=10, pady=6)
+        ttk.Radiobutton(src_group, text="In-Progress Only", variable=src_var, value="inprogress").pack(side='left', padx=10, pady=6)
+        ttk.Radiobutton(src_group, text="Both", variable=src_var, value="both").pack(side='left', padx=10, pady=6)
 
         # Page size and orientation for PDF
-        Label(win, text="Page Size:").grid(row=1, column=0, sticky='w', padx=10, pady=(5,2))
+        Label(win, text="Page Size:").grid(row=2, column=0, sticky='w', padx=10, pady=(5,2))
         page_size_var = StringVar(value="Letter")
         page_size_combo = ttk.Combobox(win, textvariable=page_size_var, values=["Letter", "Legal", "A4"], state='readonly', width=12)
-        page_size_combo.grid(row=1, column=1, sticky='w', padx=5, pady=(5,2))
+        page_size_combo.grid(row=2, column=1, sticky='w', padx=5, pady=(5,2))
 
-        Label(win, text="Orientation:").grid(row=2, column=0, sticky='w', padx=10, pady=2)
+        Label(win, text="Orientation:").grid(row=3, column=0, sticky='w', padx=10, pady=2)
         orientation_var = StringVar(value="Auto")
         orientation_combo = ttk.Combobox(win, textvariable=orientation_var, values=["Auto", "Portrait", "Landscape"], state='readonly', width=12)
-        orientation_combo.grid(row=2, column=1, sticky='w', padx=5, pady=2)
+        orientation_combo.grid(row=3, column=1, sticky='w', padx=5, pady=2)
 
         def do_export():
-            cases = get_all_cases_db()
-            if not cases:
+            # Determine data sources
+            completed_cases = get_all_cases_db() or []
+            inprog_cases = get_all_in_progress_cases_db() or []
+            selected = src_var.get()
+            if selected == "completed":
+                cases = completed_cases
+                ip_cases = []
+            elif selected == "inprogress":
+                cases = []
+                ip_cases = inprog_cases
+            else:
+                cases = completed_cases
+                ip_cases = inprog_cases
+
+            if not cases and not ip_cases:
                 Messagebox.show_info("Summary", "No cases available.")
                 return
+
             if fmt_var.get() == "PDF":
-                self.export_total_case_summary_pdf(
+                self.export_all_cases_summary_pdf(
                     cases,
-                    "",
-                    "",
-                    0,
-                    "",
+                    in_progress_cases=ip_cases,
                     page_size=page_size_var.get(),
                     orientation=orientation_var.get(),
                 )
             else:
-                self.export_total_case_summary_xlsx(cases, "", "", 0, "")
+                combined = list(cases) + list(ip_cases)
+                self.export_total_case_summary_xlsx(combined, "", "", 0, "")
             win.destroy()
 
-        Button(win, text="Generate Summary", command=do_export).grid(row=3, column=0, columnspan=3, pady=12)
+        Button(win, text="Generate Summary", command=do_export).grid(row=4, column=0, columnspan=4, padx=10, pady=12, sticky='we')
 
     def export_total_case_summary_pdf(self, cases, start_date, end_date, recent_only, recent_days, page_size="Letter", orientation="Auto"):
         from tkinter import filedialog
@@ -2165,15 +2359,26 @@ class CaseLogApp:
         # Logo and title (top right)
         try:
             if os.path.exists(LOGO_FILENAME):
-                logo_width = 1.1*inch
-                logo_height = 1.1*inch
+                from PIL import Image as PILImage
+                pil_img = PILImage.open(LOGO_FILENAME)
+                orig_w, orig_h = pil_img.size
+                max_dim = 1.1 * inch
+                if orig_w > orig_h:
+                    logo_width = max_dim
+                    logo_height = max_dim * (orig_h / orig_w)
+                else:
+                    logo_height = max_dim
+                    logo_width = max_dim * (orig_w / orig_h)
                 img = RLImage(LOGO_FILENAME, width=logo_width, height=logo_height)
                 title = "Total Case Summary"
                 if start_date or end_date:
                     title += f" ({start_date or '...'} to {end_date or '...'})"
                 if recent_only:
                     title += f" (Recent {recent_days} days)"
-                title_para = Paragraph(f"<b>{title}</b>", styles["Title"])
+                # Reduce title font size and allow word wrap
+                from reportlab.lib.styles import ParagraphStyle
+                small_title_style = ParagraphStyle('SmallTitle', parent=styles["Title"], fontSize=14, leading=16, alignment=1, wordWrap='CJK')
+                title_para = Paragraph(f"<b>{title}</b>", small_title_style)
                 logo_table = Table(
                     [[title_para, img]],
                     colWidths=[None, logo_width],
@@ -2195,7 +2400,9 @@ class CaseLogApp:
                     title += f" ({start_date or '...'} to {end_date or '...'})"
                 if recent_only:
                     title += f" (Recent {recent_days} days)"
-                elements.append(Paragraph(f"<b>{title}</b>", styles["Title"]))
+                from reportlab.lib.styles import ParagraphStyle
+                small_title_style = ParagraphStyle('SmallTitle', parent=styles["Title"], fontSize=14, leading=16, alignment=1, wordWrap='CJK')
+                elements.append(Paragraph(f"<b>{title}</b>", small_title_style))
                 elements.append(Spacer(1, 12))
         except Exception:
             title = "Total Case Summary"
@@ -2277,7 +2484,11 @@ class CaseLogApp:
                 widest_idx = max(range(len(col_widths)), key=lambda i: col_widths[i])
                 col_widths[widest_idx] += gap
 
-            t = Table([headers] + rows, colWidths=col_widths, repeatRows=1, splitByRow=True)
+            # Use smaller font and word wrap for headers
+            from reportlab.lib.styles import ParagraphStyle
+            header_style = ParagraphStyle('HeaderSmall', fontName='Helvetica-Bold', fontSize=8, leading=9, alignment=1, wordWrap='CJK')
+            wrapped_headers = [Paragraph(h, header_style) for h in headers]
+            t = Table([wrapped_headers] + rows, colWidths=col_widths, repeatRows=1, splitByRow=True)
             t.setStyle(TableStyle([
                 ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
                 ("ALIGN", (0,0), (-1,-1), "LEFT"),
@@ -2334,6 +2545,193 @@ class CaseLogApp:
                     })
                 df_recent = pd.DataFrame(rows)
                 df_recent.to_excel(writer, sheet_name=f"Recent_{recent_days}d", index=False)
+        self._show_report_saved_dialog(filename)
+
+    def export_all_cases_summary_pdf(self, completed_cases, in_progress_cases=None, page_size="Letter", orientation="Auto"):
+        from tkinter import filedialog
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.pagesizes import letter, legal, A4, landscape, portrait
+        from reportlab.lib import colors
+        from reportlab.lib.units import inch
+        import os
+
+        in_progress_cases = in_progress_cases or []
+        filename = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF files", "*.pdf")], title="Save All Cases Summary PDF")
+        if not filename:
+            return
+
+        size_map = {"Letter": letter, "Legal": legal, "A4": A4}
+        base_size = size_map.get(page_size, letter)
+        # Use landscape if many columns (when including in-progress details), otherwise portrait
+        use_landscape = True if orientation == "Landscape" else False
+        if orientation == "Auto":
+            use_landscape = True if in_progress_cases else False
+        pagesize = landscape(base_size) if use_landscape else portrait(base_size)
+
+        doc = SimpleDocTemplate(filename, pagesize=pagesize, leftMargin=20, rightMargin=20, topMargin=24, bottomMargin=24)
+        styles = getSampleStyleSheet()
+        page_width = pagesize[0] - doc.leftMargin - doc.rightMargin
+        elements = []
+
+        # Header
+        header_info = self.get_report_header_info()
+        header_lines = [
+            f"Name: {header_info.get('Name','')}",
+            f"Agency: {header_info.get('Agency','')}",
+            f"Division: {header_info.get('Division','')}",
+            f"Date: {header_info.get('Date','')}"
+        ]
+        header_table = Table([[Paragraph(line, styles["Normal"])] for line in header_lines])
+        elements.append(header_table)
+        elements.append(Spacer(1, 10))
+
+        # Title with optional logo
+        try:
+            title = "All Cases Summary"
+            title_para = Paragraph(f"<b>{title}</b>", styles["Title"]) 
+            if os.path.exists(LOGO_FILENAME):
+                logo_width = 1.1 * inch
+                img = RLImage(LOGO_FILENAME, width=logo_width, height=logo_width)
+                title_table = Table([[title_para, img]], colWidths=[None, logo_width])
+                title_table.setStyle(TableStyle([
+                    ("ALIGN", (0,0), (0,0), "LEFT"),
+                    ("ALIGN", (1,0), (1,0), "RIGHT"),
+                    ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+                ]))
+                elements.append(title_table)
+            else:
+                elements.append(title_para)
+        except Exception:
+            elements.append(Paragraph("<b>All Cases Summary</b>", styles["Title"]))
+        elements.append(Spacer(1, 12))
+
+        # Totals across both datasets
+        all_cases = list(completed_cases) + list(in_progress_cases)
+        total_cases = len(all_cases)
+        total_gb = sum(safe_float_conversion(c.get('volume_size_gb')) for c in all_cases)
+        total_tb = total_gb / 1024 if total_gb > 999 else None
+        elements.append(Paragraph(f"<b>Total Devices:</b> {total_cases}", styles["Normal"]))
+        vol_text = f"{total_tb:.2f} TB" if total_tb else f"{total_gb:.2f} GB"
+        elements.append(Paragraph(f"<b>Total Volume:</b> {vol_text}", styles["Normal"]))
+        elements.append(Spacer(1, 8))
+
+        # Breakdown tables
+        def breakdown(items, field):
+            d = {}
+            for c in items:
+                v = (c.get(field) or '').strip() or 'Unknown'
+                d[v] = d.get(v, 0) + 1
+            return sorted(d.items(), key=lambda kv: (-kv[1], kv[0].lower()))
+
+        for field, label in [("examiner", "Examiner"), ("agency", "Agency"), ("offense_type", "Offense Type"), ("device_type", "Device Type")]:
+            pairs = breakdown(all_cases, field)
+            if not pairs:
+                continue
+            count_col_w = 1.2 * inch
+            value_col_w = max(1.5 * inch, page_width - count_col_w)
+            t = Table([["Value", "Count"]] + [[k, v] for k, v in pairs], colWidths=[value_col_w, count_col_w])
+            t.setStyle(TableStyle([
+                ("BACKGROUND", (0,0), (-1,0), colors.whitesmoke),
+                ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+                ("ALIGN", (1,1), (1,-1), "RIGHT"),
+                ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
+                ("FONTSIZE", (0,0), (-1,-1), 9),
+            ]))
+            elements.append(Paragraph(f"<b>{label} Breakdown</b>", styles["Heading3"]))
+            elements.append(t)
+            elements.append(Spacer(1, 8))
+
+        # Completed details
+        headers = ["#", "Case #", "Created", "Examiner", "Agency", "Offense", "Device"]
+        rows = [headers]
+        for i, c in enumerate(completed_cases, 1):
+            rows.append([
+                str(i),
+                c.get('case_number', ''),
+                format_date_str_for_display(c.get('start_date') or c.get('created_at', '')),
+                c.get('examiner', ''),
+                c.get('agency', ''),
+                c.get('offense_type', ''),
+                c.get('device_type', ''),
+            ])
+        elements.append(Paragraph("<b>Completed Case Details</b>", styles["Heading2"]))
+        # width calc
+        min_w = 0.4 * inch
+        max_w = (2.5 if use_landscape else 2.0) * inch
+        col_weights = []
+        for ci in range(len(headers)):
+            max_len = len(str(rows[0][ci]))
+            for r in rows[1:]:
+                val = '' if ci >= len(r) or r[ci] is None else str(r[ci])
+                if len(val) > max_len:
+                    max_len = len(val)
+            col_weights.append(max(0.6, min(3.0, max_len / 10)))
+        total_weight = sum(col_weights) or 1.0
+        raw_widths = [(w / total_weight) * page_width for w in col_weights]
+        col_widths = [max(min_w, min(max_w, w)) for w in raw_widths]
+        total_w = sum(col_widths)
+        if total_w < page_width:
+            gap = page_width - total_w
+            widest_idx = max(range(len(col_widths)), key=lambda i: col_widths[i])
+            col_widths[widest_idx] += gap
+        t_completed = Table(rows, colWidths=col_widths, repeatRows=1, splitByRow=True)
+        t_completed.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
+            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+            ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
+            ("FONTSIZE", (0,0), (-1,-1), 8),
+            ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+        ]))
+        elements.append(t_completed)
+
+        # In-progress details
+        if in_progress_cases:
+            ip_headers = ["#", "Case #", "Created", "Examiner", "Agency", "Offense", "Device", "Priority", "Workflow", "Target Due"]
+            ip_rows = [ip_headers]
+            for i, c in enumerate(in_progress_cases, 1):
+                ip_rows.append([
+                    str(i),
+                    c.get('case_number', ''),
+                    format_date_str_for_display(c.get('created_at', '')),
+                    c.get('examiner', ''),
+                    c.get('agency', ''),
+                    c.get('offense_type', ''),
+                    c.get('device_type', ''),
+                    c.get('priority', ''),
+                    c.get('workflow_status', ''),
+                    format_date_str_for_display(c.get('target_due_date', '')),
+                ])
+            elements.append(Paragraph("<b>In-Progress Case Details</b>", styles["Heading2"]))
+            min_w = 0.4 * inch
+            max_w = 2.2 * inch
+            col_weights = []
+            for ci in range(len(ip_headers)):
+                max_len = len(str(ip_rows[0][ci]))
+                for r in ip_rows[1:]:
+                    val = '' if ci >= len(r) or r[ci] is None else str(r[ci])
+                    if len(val) > max_len:
+                        max_len = len(val)
+                col_weights.append(max(0.6, min(3.0, max_len / 10)))
+            total_weight = sum(col_weights) or 1.0
+            raw_widths = [(w / total_weight) * page_width for w in col_weights]
+            ip_col_widths = [max(min_w, min(max_w, w)) for w in raw_widths]
+            total_w = sum(ip_col_widths)
+            if total_w < page_width:
+                gap = page_width - total_w
+                widest_idx = max(range(len(ip_col_widths)), key=lambda i: ip_col_widths[i])
+                ip_col_widths[widest_idx] += gap
+            t_ip = Table(ip_rows, colWidths=ip_col_widths, repeatRows=1, splitByRow=True)
+            t_ip.setStyle(TableStyle([
+                ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
+                ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+                ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
+                ("FONTSIZE", (0,0), (-1,-1), 8),
+                ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+            ]))
+            elements.append(t_ip)
+
+        doc.build(elements)
         self._show_report_saved_dialog(filename)
     def show_case_summary_report(self):
         """Generate a one-page PDF summary for the selected case."""
@@ -2929,8 +3327,8 @@ class CaseLogApp:
             except Exception:
                 break
             try:
-                location = geolocator.geocode(f"{city}, {state}, USA", timeout=10)
-                if location:
+                location = geolocator.geocode(f"{city}, {state}, USA")
+                if location and hasattr(location, 'latitude') and hasattr(location, 'longitude'):
                     coords = (location.latitude, location.longitude)
                     add_cached_location_db(f"{city}|{state}", location.latitude, location.longitude)
                     self._geocoded_results.append((city, state, coords))
@@ -3047,6 +3445,17 @@ class CaseLogApp:
             set_user_pref('theme', default_theme)
             self._saved_theme_code = default_theme
             logging.warning(f"Saved theme '{saved_theme}' not available. Falling back to '{default_theme}'.")
+
+        # --- Dashboard summary StringVars (must be initialized before any method uses them) ---
+        import tkinter as tk
+        self.total_cases_var = tk.StringVar(value="0")
+        self.critical_var = tk.StringVar(value="Critical: 0")
+        self.high_var = tk.StringVar(value="High: 0")
+        self.medium_var = tk.StringVar(value="Medium: 0")
+        self.low_var = tk.StringVar(value="Low: 0")
+        self.overdue_var = tk.StringVar(value="Overdue: 0")
+        self.due_soon_var = tk.StringVar(value="Due Soon: 0")
+        self.total_volume_var = tk.StringVar(value="0 GB")
 
         # When theme changes at runtime, re-apply contrast-aware colors on summary labels
         try:
@@ -3195,6 +3604,10 @@ class CaseLogApp:
         self.create_graph_widgets()
         self.create_settings_widgets()
         self.create_about_widgets()
+
+        # Auto-update check on launch if enabled
+        if get_user_pref('auto_update_check', True):
+            self.check_for_updates(silent=True)
         # Ensure no call to create_dashboard_widgets remains
 
     def create_about_widgets(self):
@@ -3246,7 +3659,7 @@ class CaseLogApp:
             "Support & Documentation:\n"
             "- For help or updates, contact your system administrator or the application provider.\n"
             "- This tool is for internal use by digital forensics labs and law enforcement.\n\n"
-            f"Version: {APP_VERSION} (Aug 27, 2025)\n"
+            f"Version: {APP_VERSION} ({RELEASE_DATE})\n"
             f"Data Directory: {DATA_DIR}\n"
             f"Database File: {DB_FILENAME}\n"
             f"Log File: {LOG_FILENAME}\n\n"
@@ -3771,135 +4184,41 @@ class CaseLogApp:
         except Exception:
             pass
 
-    def create_in_progress_widgets(self):
-        """Creates the widgets for the In Progress tab - similar to View Data tab."""
-        # Configure grid
-        self.in_progress_frame.rowconfigure(0, weight=0) # Dashboard row
-        self.in_progress_frame.rowconfigure(1, weight=0) # Controls row
-        self.in_progress_frame.rowconfigure(2, weight=1) # Treeview row
-        self.in_progress_frame.columnconfigure(0, weight=1)
+        # Always populate the table on tab creation
+        self.refresh_data_view()
 
-        # Phase 2: Dashboard Summary Widget
-        self.create_dashboard_summary()
 
-        # Control frame for buttons and search
-        control_frame = ttk.Frame(self.in_progress_frame)
-        control_frame.grid(row=1, column=0, sticky='ew', padx=(0,0), pady=(0,10))
-        control_frame.columnconfigure(2, weight=1)
-
-        # Left side - action buttons
-        button_frame = ttk.Frame(control_frame)
-        button_frame.grid(row=0, column=0, sticky='w')
-
-        edit_in_progress_btn = ttk.Button(button_frame, text="Edit Selected", command=self.edit_selected_in_progress_case)
-        edit_in_progress_btn.pack(side='left', padx=(0,5))
-
-        complete_btn = ttk.Button(button_frame, text="Mark as Completed", command=self.mark_case_as_completed, style="Accent.TButton")
-        complete_btn.pack(side='left', padx=(0,5))
-
-        delete_in_progress_btn = ttk.Button(button_frame, text="Delete Selected", command=self.delete_selected_in_progress_cases)
-        delete_in_progress_btn.pack(side='left', padx=(0,5))
-
-        # Phase 2: Bulk Operations
-        bulk_separator = ttk.Separator(button_frame, orient='vertical')
-        bulk_separator.pack(side='left', padx=(10,10), fill='y')
-
-        bulk_priority_btn = ttk.Button(button_frame, text="Bulk Set Priority", command=self.bulk_set_priority)
-        bulk_priority_btn.pack(side='left', padx=(0,5))
-
-        bulk_complete_btn = ttk.Button(button_frame, text="Bulk Complete", command=self.bulk_mark_completed, style="Accent.TButton")
-        bulk_complete_btn.pack(side='left', padx=(0,5))
-
-        # Right side - search and filters
-        search_frame = ttk.Frame(control_frame)
-        search_frame.grid(row=0, column=2, sticky='e')
-
-        # Phase 2: Enhanced Filtering
-        ttk.Label(search_frame, text="Priority:").pack(side='left', padx=(0,5))
-        self.priority_filter_var = tk.StringVar(value='All')
-        priority_filter = ttk.Combobox(search_frame, textvariable=self.priority_filter_var, 
-                                     values=['All', 'Critical', 'High', 'Medium', 'Low'], 
-                                     state='readonly', width=8)
-        priority_filter.pack(side='left', padx=(0,10))
-        priority_filter.bind('<<ComboboxSelected>>', lambda e: self.apply_in_progress_filter())
-
-        ttk.Label(search_frame, text="Search:").pack(side='left', padx=(0,5))
-        self.in_progress_search_var = tk.StringVar()
-        search_entry = ttk.Entry(search_frame, textvariable=self.in_progress_search_var, width=20)
-        search_entry.pack(side='left', padx=(0,5))
-        search_entry.bind('<KeyRelease>', lambda e: self.apply_in_progress_filter())
-
-        search_btn = ttk.Button(search_frame, text="Search", command=self.apply_in_progress_filter)
-        search_btn.pack(side='left', padx=(0,5))
-
-        clear_search_btn = ttk.Button(search_frame, text="Clear", command=self.clear_in_progress_filter)
-        clear_search_btn.pack(side='left')
-
-        # Treeview frame
-        tree_frame = ttk.Frame(self.in_progress_frame)
-        tree_frame.grid(row=2, column=0, sticky='nsew', padx=(0,0), pady=(0,0))
-        tree_frame.rowconfigure(0, weight=1)
-        tree_frame.columnconfigure(0, weight=1)
-
-        # Create the in-progress treeview (use same columns as main view)
-        self.in_progress_tree = ttk.Treeview(tree_frame, show='headings')
-        self.in_progress_tree.grid(row=0, column=0, sticky='nsew')
-
-        # Use the same column configuration as the main tree plus Phase 1 fields
-        self.in_progress_tree_columns_config = {
-            'id': {'text': 'ID', 'width': 50},
-            'priority': {'text': 'Priority', 'width': 80},
-            'workflow_status': {'text': 'Status', 'width': 120},  # Phase 3: Workflow Status
-            'case_number': {'text': 'Case #', 'width': 120},
-            'examiner': {'text': 'Examiner', 'width': 120},
-            'investigator': {'text': 'Investigator', 'width': 120},
-            'agency': {'text': 'Agency', 'width': 120},
-            'city_of_offense': {'text': 'City', 'width': 100},
-            'state_of_offense': {'text': 'State', 'width': 60},
-            'start_date': {'text': 'Start Date', 'width': 100},
-            'end_date': {'text': 'End Date', 'width': 100},
-            'target_due_date': {'text': 'Due Date', 'width': 100},
-            'volume_size_gb': {'text': 'Volume (GB)', 'width': 100},
-            'offense_type': {'text': 'Offense Type', 'width': 120},
-            'device_type': {'text': 'Device Type', 'width': 100},
-            'model': {'text': 'Model', 'width': 100},
-            'os': {'text': 'OS', 'width': 80},
-            'data_recovered': {'text': 'Data Recovered?', 'width': 120},
-            'fpr_complete': {'text': 'FPR Complete?', 'width': 120},
-            'notes': {'text': 'Notes', 'width': 200},
-            'created_at': {'text': 'Created', 'width': 150}
-        }
-
-        # Configure columns
-        all_columns = list(self.in_progress_tree_columns_config.keys())
-        self.in_progress_tree['columns'] = all_columns
-        
-        for col in all_columns:
-            config = self.in_progress_tree_columns_config[col]
-            self.in_progress_tree.heading(col, text=config['text'])
-            if col == 'id':
-                # Hide the ID column but keep it for data storage
-                self.in_progress_tree.column(col, width=0, minwidth=0, stretch=False)
-                self.in_progress_tree.heading(col, text='')
-            else:
-                self.in_progress_tree.column(col, width=config['width'], minwidth=50)
-
-        # Scrollbars
-        v_scrollbar = ttk.Scrollbar(tree_frame, orient='vertical', command=self.in_progress_tree.yview)
-        v_scrollbar.grid(row=0, column=1, sticky='ns')
-        self.in_progress_tree.configure(yscrollcommand=v_scrollbar.set)
-
-        h_scrollbar = ttk.Scrollbar(tree_frame, orient='horizontal', command=self.in_progress_tree.xview)
-        h_scrollbar.grid(row=1, column=0, sticky='ew')
-        self.in_progress_tree.configure(xscrollcommand=h_scrollbar.set)
-
-        # Bind events
-        self.in_progress_tree.bind('<Double-1>', lambda e: self.edit_selected_in_progress_case())
-        self.in_progress_tree.bind('<Return>', lambda e: self.edit_selected_in_progress_case())
-        self.in_progress_tree.bind('<Delete>', lambda e: self.delete_selected_in_progress_cases())
-
-        # Initial data load
-        self.refresh_in_progress_view()
+    def create_about_widgets(self):
+        """Creates the widgets for the About tab with application info."""
+        about_text = (
+            f"CyberLab Case Tracker\n"
+            f"\nPurpose:\n"
+            "CyberLab Case Tracker is designed for digital forensic professionals to efficiently manage, track, and report on digital evidence and casework.\n\n"
+            "Key Features:\n"
+            "- Add, edit, and manage digital forensic cases with detailed metadata.\n"
+            "- Track both in-progress and completed cases.\n"
+            "- Generate comprehensive reports (PDF, text, Excel) for cases and date ranges.\n"
+            "- Visualize case data with interactive graphs and maps.\n"
+            "- Import/export case data (Excel, CSV).\n"
+            "- Customizable columns, user preferences, and password protection.\n"
+            "- Auto-update check and easy settings management.\n\n"
+            "Quick Start Guide:\n"
+            "1. Add a new case using the 'New Entry' tab.\n"
+            "2. View, search, and filter all cases in the 'View Data' tab.\n"
+            "3. Track ongoing work in the 'In Progress' tab.\n"
+            "4. Visualize trends in the 'Graphs' tab and locations in the 'Map' tab.\n"
+            "5. Generate and export reports from the 'Reports' menu.\n"
+            "6. Adjust preferences and check for updates in the 'Settings' tab.\n\n"
+            f"Version: v2.1.5 ({RELEASE_DATE})\n"
+            "Developed by RF-YVY. For more info, visit: https://github.com/RF-YVY/CyberLabLog\n"
+        )
+        about_box = scrolledtext.ScrolledText(self.about_frame, wrap='word', font=("Segoe UI", 11), state='normal', height=28, width=100)
+        about_box.insert('1.0', about_text)
+        about_box.config(state='disabled')
+        about_box.pack(fill='both', expand=True, padx=10, pady=(0,10))
+        # Add Check for Updates button
+        update_btn = ttk.Button(self.about_frame, text="Check for Updates", command=self.check_for_updates)
+        update_btn.pack(anchor='e', padx=10, pady=(0,10))
     # --- Saved Filters and Column Presets Helpers ---
     def rebuild_filters_menu(self):
         """Rebuild the Filters menu from saved JSON settings."""
@@ -4748,20 +5067,21 @@ class CaseLogApp:
                 y_label = "Total Volume (GB)"
                 display_values = [f"{v:.2f}" for v in values]
                 plot_values = values
-            self.ax.clear()
-            bars = self.ax.bar(labels, plot_values, color="#4a90e2", align='center')
-            self.ax.set_xlabel(group_field.replace('_', ' ').title())
-            self.ax.set_ylabel(y_label)
-            self.ax.set_title(f"{graph_type}")
-            self.ax.tick_params(axis='x', rotation=45)
-            self.fig.autofmt_xdate(rotation=45)
-            self.fig.subplots_adjust(bottom=0.25)
-            # Annotate values on bars
-            for bar, val in zip(bars, display_values):
-                height = bar.get_height()
-                self.ax.text(bar.get_x() + bar.get_width()/2, height, val, ha='center', va='bottom', fontsize=9)
-            self.fig.tight_layout()
-            self.canvas_agg.draw()
+            if self.ax and self.fig and self.canvas_agg:
+                self.ax.clear()
+                bars = self.ax.bar(labels, plot_values, color="#4a90e2", align='center')
+                self.ax.set_xlabel(group_field.replace('_', ' ').title())
+                self.ax.set_ylabel(y_label)
+                self.ax.set_title(f"{graph_type}")
+                self.ax.tick_params(axis='x', rotation=45)
+                self.fig.autofmt_xdate(rotation=45)
+                self.fig.subplots_adjust(bottom=0.25)
+                # Annotate values on bars
+                for bar, val in zip(bars, display_values):
+                    height = bar.get_height()
+                    self.ax.text(bar.get_x() + bar.get_width()/2, height, val, ha='center', va='bottom', fontsize=9)
+                self.fig.tight_layout()
+                self.canvas_agg.draw()
             return
 
         if graph_type == "Total Volume (GB/TB)":
@@ -4779,15 +5099,16 @@ class CaseLogApp:
                 y_label = "Total Volume (GB)"
 
             # Plot a single bar
-            self.ax.clear()
-            self.ax.bar(["Total"], [y_val], color="#4a90e2", align='center')
-            self.ax.set_xlabel("")
-            self.ax.set_ylabel(y_label)
-            self.ax.set_title("Total Volume of All Cases")
-            # Annotate value on bar
-            self.ax.text(0, y_val, display_value, ha='center', va='bottom', fontsize=14, fontweight='bold')
-            self.fig.tight_layout()
-            self.canvas_agg.draw()
+            if self.ax and self.fig and self.canvas_agg:
+                self.ax.clear()
+                self.ax.bar(["Total"], [y_val], color="#4a90e2", align='center')
+                self.ax.set_xlabel("")
+                self.ax.set_ylabel(y_label)
+                self.ax.set_title("Total Volume of All Cases")
+                # Annotate value on bar
+                self.ax.text(0, y_val, display_value, ha='center', va='bottom', fontsize=14, fontweight='bold')
+                self.fig.tight_layout()
+                self.canvas_agg.draw()
             return
 
         # Map graph type to DB field
@@ -4824,39 +5145,43 @@ class CaseLogApp:
         values = [item[1] for item in sorted_items]
 
         # Clear and plot
-        self.ax.clear()
-        if not labels:
-            self.ax.text(0.5, 0.5, "No data to display", ha='center', va='center', fontsize=16)
-        else:
-            bars = self.ax.bar(labels, values, color="#4a90e2", align='center')
-            self.ax.set_xlabel(xlabel)
-            self.ax.set_ylabel("Count")
-            self.ax.set_title(f"{graph_type} Distribution")
-            self.ax.tick_params(axis='x', rotation=45)
-            # For better label spacing
-            self.fig.autofmt_xdate(rotation=45)
-            # Optionally, adjust bottom margin for long labels
-            self.fig.subplots_adjust(bottom=0.25)
-
-        self.fig.tight_layout()
-        self.canvas_agg.draw()
+        if self.ax and self.fig and self.canvas_agg:
+            self.ax.clear()
+            if not labels:
+                self.ax.text(0.5, 0.5, "No data to display", ha='center', va='center', fontsize=16)
+            else:
+                bars = self.ax.bar(labels, values, color="#4a90e2", align='center')
+                self.ax.set_xlabel(xlabel)
+                self.ax.set_ylabel("Count")
+                self.ax.set_title(f"{graph_type} Distribution")
+                self.ax.tick_params(axis='x', rotation=45)
+                # For better label spacing
+                self.fig.autofmt_xdate(rotation=45)
+                # Optionally, adjust bottom margin for long labels
+                self.fig.subplots_adjust(bottom=0.25)
+            self.fig.tight_layout()
+            self.canvas_agg.draw()
 
     def create_settings_widgets(self):
         # """Creates the widgets for the Settings tab."""
         self.settings_frame.rowconfigure(0, weight=1)
         self.settings_frame.columnconfigure(0, weight=1)
         settings_content_frame = ttk.Frame(self.settings_frame)
-        settings_content_frame.grid(row=0, column=0, sticky='nsew')
+        settings_content_frame.pack(fill='both', expand=True)
+        # --- Auto Update Check Option ---
+        auto_update_var = tk.BooleanVar(value=get_user_pref('auto_update_check', True))
+        def on_auto_update_toggle():
+            set_user_pref('auto_update_check', auto_update_var.get())
+        auto_update_chk = ttk.Checkbutton(settings_content_frame, text="Check for updates on launch", variable=auto_update_var, command=on_auto_update_toggle)
+        auto_update_chk.pack(anchor='w', padx=10, pady=(8, 0))
 
         # --- Make the Settings content scrollable (for small screens) ---
         # Create a canvas + vertical scrollbar, and an inner frame that actually holds content
-        settings_content_frame.rowconfigure(0, weight=1)
-        settings_content_frame.columnconfigure(0, weight=1)
         _canvas = tk.Canvas(settings_content_frame, borderwidth=0, highlightthickness=0)
         _vscroll = ttk.Scrollbar(settings_content_frame, orient='vertical', command=_canvas.yview)
         _canvas.configure(yscrollcommand=_vscroll.set)
-        _canvas.grid(row=0, column=0, sticky='nsew')
-        _vscroll.grid(row=0, column=1, sticky='ns')
+        _canvas.pack(side='left', fill='both', expand=True)
+        _vscroll.pack(side='right', fill='y')
 
         # Inner frame to pack all settings sections into
         _inner = ttk.Frame(_canvas)
@@ -4895,8 +5220,10 @@ class CaseLogApp:
 
         # --- Map Marker Icon Section (Single, Optimized) ---
         marker_icon_section_frame = ttk.Frame(settings_content_frame)
+        # --- Map Marker Icon Section (Single, Optimized) ---
+        marker_icon_section_frame = ttk.Frame(settings_content_frame)
         marker_icon_section_frame.pack(fill='x', pady=10, anchor='w', padx=10)
-        ttk.Label(marker_icon_section_frame, text="Map Marker Icon:", font=("-weight", "bold")).pack(anchor='w', pady=(0, 5))
+        ttk.Label(marker_icon_section_frame, text="Map Marker Icon:", font=("Segoe UI", 10, "bold")).pack(anchor='w', pady=(0, 5))
         ttk.Label(marker_icon_section_frame, text=f"Select PNG image for map markers. Saved as marker_icon.png in:\n{DATA_DIR}").pack(anchor='w', pady=(0, 10))
         select_marker_icon_button_frame = ttk.Frame(marker_icon_section_frame)
         select_marker_icon_button_frame.pack(fill='x', pady=5, anchor='w')
@@ -4910,7 +5237,7 @@ class CaseLogApp:
         # --- Report Header Logo Section ---
         logo_section_frame = ttk.Frame(settings_content_frame)
         logo_section_frame.pack(fill='x', pady=10, anchor='w', padx=10)
-        ttk.Label(logo_section_frame, text="Header Logo:", font=("-weight", "bold")).pack(anchor='w', pady=(0, 5))
+        ttk.Label(logo_section_frame, text="Header Logo:", font=("Segoe UI", 10, "bold")).pack(anchor='w', pady=(0, 5))
         ttk.Label(logo_section_frame, text=f"Select image (png, jpg, jpeg, gif).\nSaved as logo.png in:\n{DATA_DIR}").pack(anchor='w', pady=(0, 10))
         select_logo_button_frame = ttk.Frame(logo_section_frame)
         select_logo_button_frame.pack(fill='x', pady=5, anchor='w')
@@ -4929,8 +5256,7 @@ class CaseLogApp:
             self.load_logo_image()
         except Exception:
             pass
-        
-        
+
         # --- Action Buttons Frame (packed left) ---
         buttons_area_frame = ttk.Frame(settings_content_frame)
         buttons_area_frame.pack(fill='x', pady=10, anchor='w', padx=10)
@@ -4952,7 +5278,7 @@ class CaseLogApp:
         # --- Backup & Restore Section ---
         backup_section_frame = ttk.Frame(settings_content_frame)
         backup_section_frame.pack(fill='x', pady=10, anchor='w', padx=10)
-        ttk.Label(backup_section_frame, text="Backup & Restore:", font=('-weight', 'bold')).pack(anchor='w', pady=(0, 5))
+        ttk.Label(backup_section_frame, text="Backup & Restore:", font=("Segoe UI", 10, "bold")).pack(anchor='w', pady=(0, 5))
         ttk.Label(backup_section_frame, text=f"Backups are stored in:\n{BACKUP_DIR}").pack(anchor='w', pady=(0, 5))
         backup_buttons_frame = ttk.Frame(backup_section_frame)
         backup_buttons_frame.pack(fill='x', pady=5, anchor='w')
@@ -4963,7 +5289,7 @@ class CaseLogApp:
         # --- Health Panel ---
         health_section = ttk.Frame(settings_content_frame)
         health_section.pack(fill='x', pady=10, anchor='w', padx=10)
-        ttk.Label(health_section, text="Database Health:", font=('-weight', 'bold')).pack(anchor='w', pady=(0, 5))
+        ttk.Label(health_section, text="Database Health:", font=("Segoe UI", 10, "bold")).pack(anchor='w', pady=(0, 5))
         self.health_text = tk.StringVar(value="")
         health_label = ttk.Label(health_section, textvariable=self.health_text, justify='left')
         health_label.pack(anchor='w')
@@ -5010,9 +5336,7 @@ class CaseLogApp:
         # --- Theme Selection Section ---
         theme_section_frame = ttk.Frame(settings_content_frame)
         theme_section_frame.pack(fill='x', pady=10, anchor='w', padx=10)
-
-        ttk.Label(theme_section_frame, text="Application Theme:", font=("-weight", "bold")).pack(anchor='w', pady=(0, 5))
-
+        ttk.Label(theme_section_frame, text="Application Theme:", font=("Segoe UI", 10, "bold")).pack(anchor='w', pady=(0, 5))
 
         self.theme_var = tk.StringVar()
         # Build dynamic list of available themes from ttkbootstrap if possible
@@ -5304,11 +5628,11 @@ class CaseLogApp:
         """Refresh the in-progress treeview with optional text and priority filtering."""
         if not hasattr(self, 'in_progress_tree') or not self.in_progress_tree:
             return
-            
+
         self.in_progress_tree.delete(*self.in_progress_tree.get_children())
-        
+
         cases = get_all_in_progress_cases_db()
-        
+
         # Apply text filter
         if filter_text:
             filter_text = filter_text.lower().strip()
@@ -5318,7 +5642,7 @@ class CaseLogApp:
                 if filter_text in case_str:
                     filtered_cases.append(case)
             cases = filtered_cases
-        
+
         # Apply priority filter
         if priority_filter:
             priority_filtered_cases = []
@@ -5326,60 +5650,39 @@ class CaseLogApp:
                 if case.get('priority', '').lower() == priority_filter.lower():
                     priority_filtered_cases.append(case)
             cases = priority_filtered_cases
-        
-        all_columns = list(self.in_progress_tree_columns_config.keys())
+
+        # Insert rows into the treeview
+        columns = list(self.in_progress_tree_columns_config.keys())
         for case in cases:
-            values = []
-            for col in all_columns:
-                val = case.get(col, '')
-                if col == 'id':
-                    # Include the ID as the first value (will be hidden in display)
-                    values.append(str(val) if val is not None else '')
-                elif col in ['start_date', 'end_date', 'target_due_date'] and val:
-                    val = format_date_str_for_display(val)
-                    values.append(str(val) if val is not None else '')
-                elif col == 'fpr_complete':
-                    val = format_bool_int(val)
-                    values.append(str(val) if val is not None else '')
-                elif col == 'volume_size_gb' and val is not None:
-                    val = f"{val:.2f}" if isinstance(val, (int, float)) else str(val)
-                    values.append(str(val) if val is not None else '')
-                elif col == 'priority' and val:
-                    values.append(str(val))
-                else:
-                    values.append(str(val) if val is not None else '')
-            
-            # Insert the row with all values including the hidden ID
-            item_id = self.in_progress_tree.insert('', 'end', values=values)
-        
+            values = [case.get(col, "") for col in columns]
+            self.in_progress_tree.insert("", "end", values=values)
+
         # Update dashboard summary
         if hasattr(self, 'update_dashboard_summary'):
             self.update_dashboard_summary()
     
     def apply_in_progress_filter(self):
         """Apply search and priority filters to in-progress cases."""
-        filter_text = self.in_progress_search_var.get()
-        priority_filter = self.priority_filter_var.get()
-        
+        filter_text = self.in_progress_search_var.get() if hasattr(self, 'in_progress_search_var') else None
+        priority_filter = self.priority_filter_var.get() if hasattr(self, 'priority_filter_var') else None
         # Convert 'All' to None for no priority filtering
         if priority_filter == 'All':
             priority_filter = None
-            
         self.refresh_in_progress_view(filter_text, priority_filter)
     
     def clear_in_progress_filter(self):
         """Clear search and priority filters for in-progress cases."""
-        self.in_progress_search_var.set("")
+        if hasattr(self, 'in_progress_search_var'):
+            self.in_progress_search_var.set("")
         if hasattr(self, 'priority_filter_var'):
             self.priority_filter_var.set("All")
         self.refresh_in_progress_view()
     
     def edit_selected_in_progress_case(self):
         """Edit the selected in-progress case in the New Entry tab."""
-        if not self.in_progress_tree.selection():
+        if not self.in_progress_tree or not self.in_progress_tree.selection():
             Messagebox.show_info("No Selection", "Please select an in-progress case to edit.")
             return
-        
         selected_item = self.in_progress_tree.selection()[0]
         # Get the case ID from the first column (id column) which is hidden
         case_id = self.in_progress_tree.item(selected_item)['values'][0]
@@ -5413,15 +5716,13 @@ class CaseLogApp:
     
     def mark_case_as_completed(self):
         """Move selected in-progress case to completed cases."""
-        if not self.in_progress_tree.selection():
+        if not self.in_progress_tree or not self.in_progress_tree.selection():
             Messagebox.show_info("No Selection", "Please select an in-progress case to mark as completed.")
             return
-        
         selected_items = self.in_progress_tree.selection()
         if len(selected_items) > 1:
             Messagebox.show_info("Multiple Selection", "Please select only one case to mark as completed.")
             return
-        
         selected_item = selected_items[0]
         # Get the case ID from the first column (id column) which is hidden
         case_id = self.in_progress_tree.item(selected_item)['values'][0]
@@ -5455,40 +5756,32 @@ class CaseLogApp:
     
     def delete_selected_in_progress_cases(self):
         """Delete selected in-progress cases after confirmation."""
-        selected_items = self.in_progress_tree.selection()
-        if not selected_items:
+        if not self.in_progress_tree or not self.in_progress_tree.selection():
             Messagebox.show_info("No Selection", "Please select in-progress cases to delete.")
             return
-        
-        # Get case numbers for confirmation
+        selected_items = self.in_progress_tree.selection() if self.in_progress_tree else []
         case_numbers = []
         case_ids = []
         for item in selected_items:
-            # Get the case ID from the first column (id column) which is hidden
             case_id = self.in_progress_tree.item(item)['values'][0]
             if case_id:
                 case_ids.append(case_id)
                 case = get_in_progress_case_by_id_db(case_id)
                 if case:
                     case_numbers.append(case.get('case_number', f'ID:{case_id}'))
-        
         if not case_ids:
             Messagebox.show_error("Error", "Could not retrieve case IDs.")
             return
-        
-        # Confirm deletion
         cases_text = ', '.join(case_numbers)
         confirm = messagebox.askyesno(
             "Confirm Deletion",
             f"Are you sure you want to delete the following in-progress cases?\n\n{cases_text}\n\nThis action cannot be undone."
         )
-        
         if confirm:
             deleted_count = 0
             for case_id in case_ids:
                 if delete_in_progress_case_db(case_id):
                     deleted_count += 1
-            
             if deleted_count > 0:
                 Messagebox.show_info("Success", f"Deleted {deleted_count} in-progress case(s).")
                 self.refresh_in_progress_view()
@@ -5500,56 +5793,45 @@ class CaseLogApp:
     
     def bulk_set_priority(self):
         """Set priority for multiple selected in-progress cases."""
-        selected_items = self.in_progress_tree.selection()
-        if not selected_items:
+        if not self.in_progress_tree or not self.in_progress_tree.selection():
             Messagebox.show_info("No Selection", "Please select in-progress cases to update priority.")
             return
-        
-        # Create a dialog to select new priority
+        selected_items = self.in_progress_tree.selection() if self.in_progress_tree else []
         dialog = tk.Toplevel(self.root)
         dialog.title("Bulk Set Priority")
         dialog.geometry("300x150")
         dialog.transient(self.root)
         dialog.grab_set()
-        
         ttk.Label(dialog, text="Select new priority for selected cases:").pack(pady=10)
-        
         priority_var = tk.StringVar(value='Medium')
         priority_combo = ttk.Combobox(dialog, textvariable=priority_var, 
                                     values=['Critical', 'High', 'Medium', 'Low'], 
                                     state='readonly')
         priority_combo.pack(pady=10)
-        
         def apply_bulk_priority():
             new_priority = priority_var.get()
             updated_count = 0
-            
             for item in selected_items:
                 case_id = self.in_progress_tree.item(item)['values'][0]
                 if case_id:
-                    # Update just the priority field
                     update_data = {'priority': new_priority}
                     if update_in_progress_case_db(case_id, update_data):
                         updated_count += 1
-            
             dialog.destroy()
             if updated_count > 0:
                 Messagebox.show_info("Success", f"Updated priority for {updated_count} case(s) to '{new_priority}'.")
                 self.refresh_in_progress_view()
             else:
                 Messagebox.show_error("Error", "Failed to update case priorities.")
-        
         ttk.Button(dialog, text="Apply", command=apply_bulk_priority).pack(pady=10)
         ttk.Button(dialog, text="Cancel", command=dialog.destroy).pack()
     
     def bulk_mark_completed(self):
         """Mark multiple selected in-progress cases as completed."""
-        selected_items = self.in_progress_tree.selection()
-        if not selected_items:
+        if not self.in_progress_tree or not self.in_progress_tree.selection():
             Messagebox.show_info("No Selection", "Please select in-progress cases to mark as completed.")
             return
-        
-        # Get case numbers for confirmation
+        selected_items = self.in_progress_tree.selection() if self.in_progress_tree else []
         case_numbers = []
         case_ids = []
         for item in selected_items:
@@ -5559,29 +5841,23 @@ class CaseLogApp:
                 case = get_in_progress_case_by_id_db(case_id)
                 if case:
                     case_numbers.append(case.get('case_number', f'ID:{case_id}'))
-        
         if not case_ids:
             Messagebox.show_error("Error", "Could not retrieve case IDs.")
             return
-        
-        # Confirm bulk completion
         cases_text = ', '.join(case_numbers)
         confirm = messagebox.askyesno(
             "Confirm Bulk Completion",
             f"Mark the following {len(case_ids)} cases as completed?\n\n{cases_text[:200]}{'...' if len(cases_text) > 200 else ''}\n\nThey will be moved to the View Data tab."
         )
-        
         if confirm:
             completed_count = 0
             for case_id in case_ids:
                 if move_case_to_completed(case_id):
                     completed_count += 1
-            
             if completed_count > 0:
                 Messagebox.show_info("Success", f"Marked {completed_count} case(s) as completed.")
                 self.refresh_in_progress_view()
                 self.refresh_data_view()  # Refresh main view to show completed cases
-                # Refresh map markers to reflect updated city offense aggregations
                 try:
                     self.load_map_markers()
                 except Exception as e:
@@ -6271,6 +6547,9 @@ class CaseLogApp:
     def edit_selected_case(self):
         """Loads the selected case into the entry form for editing."""
         # Get the selected item from the treeview
+        if not self.tree:
+            Messagebox.show_error("Error", "Case list is not available.")
+            return
         selected_items = self.tree.selection()
         if not selected_items:
             Messagebox.show_info("Select Case", "Please select a case to edit.")
@@ -6302,7 +6581,8 @@ class CaseLogApp:
 
             # Set editing state
             self.editing_case_id = db_id
-            self.submit_button.config(text="Update Case")
+            if self.submit_button:
+                self.submit_button.config(text="Update Case")
             self.notebook.tab(self.entry_frame, text="Edit Case")
 
         except Exception as e:
@@ -6385,7 +6665,10 @@ class CaseLogApp:
         try:
             for selected_item in selected_items:
                 # Extract the database case ID from the treeview item
-                case_id = self.tree.item(selected_item)['values'][0]
+                if self.tree:
+                    case_id = self.tree.item(selected_item)['values'][0]
+                else:
+                    continue
                 logging.info(f"Extracted case ID from treeview: {case_id}")
                 
                 if delete_case_db(case_id):
@@ -6397,7 +6680,7 @@ class CaseLogApp:
             # Refresh the view after deletions with forced cache clear
             logging.info(f"Refreshing view after deleting {deleted_count} cases")
             # Clear any existing filter to ensure all remaining cases are visible
-            if hasattr(self, 'search_var'):
+            if hasattr(self, 'search_var') and self.search_var:
                 self.search_var.set('')
             self._view_filter_string = ''
             
@@ -6405,7 +6688,7 @@ class CaseLogApp:
             self.refresh_data_view(reset_lazy=True)
             
             # Force additional refresh of treeview display
-            if hasattr(self, 'tree'):
+            if hasattr(self, 'tree') and self.tree:
                 logging.info(f"Tree has {len(self.tree.get_children())} items after refresh")
                 self.tree.update()
                 self.tree.update_idletasks()
@@ -7134,7 +7417,16 @@ if __name__ == "__main__":
             try:
                 _img = Image.open(LOGO_FILENAME)
                 _img = _img.convert('RGBA')
-                _img.thumbnail((96, 96), Image.LANCZOS)
+                # Robust resampling: try Resampling.LANCZOS, then LANCZOS, then BICUBIC
+                try:
+                    resample = getattr(getattr(Image, 'Resampling', Image), 'LANCZOS', None)
+                    if resample is None:
+                        resample = getattr(Image, 'LANCZOS', None)
+                    if resample is None:
+                        resample = getattr(Image, 'BICUBIC', 3)
+                except Exception:
+                    resample = 3  # BICUBIC
+                _img.thumbnail((96, 96), resample)
                 logo_img_ref = ImageTk.PhotoImage(_img)
                 logo_label.configure(image=logo_img_ref)
             except Exception:
