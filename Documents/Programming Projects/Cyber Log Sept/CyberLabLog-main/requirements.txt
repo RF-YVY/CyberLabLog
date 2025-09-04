@@ -1,0 +1,10 @@
+tkinter
+matplotlib
+ttkbootstrap
+tkintermapview
+geopy
+openpyxl
+reportlab
+Pillow
+pandas
+requests
