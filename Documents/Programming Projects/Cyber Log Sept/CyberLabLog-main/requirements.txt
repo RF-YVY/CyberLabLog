@@ -5,6 +5,3 @@ tkintermapview
 geopy
 openpyxl
 reportlab
-Pillow
-pandas
-requests

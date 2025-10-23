@@ -7,6 +7,7 @@ a = Analysis(
     binaries=[],
     datas=[
         ('markerblue.png', '.'),
+        ('digital.ico', '.'),
         ('app_data/*', 'app_data'),
     ],
     hiddenimports=[],

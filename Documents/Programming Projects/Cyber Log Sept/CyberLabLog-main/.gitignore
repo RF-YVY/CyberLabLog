@@ -54,14 +54,3 @@ marker_icon.png
 !*.md
 !requirements.txt
 !README*
-
-# Build artifacts and distributables
-build/
-dist/
-*.exe
-*.pkg
-*.toc
-*.pyz
-*.zip
-xref-*.html
-warn-*.txt
