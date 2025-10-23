@@ -1,6 +1,54 @@
 # CyberLabCaseTracker .gitignore
 # Exclude sensitive/user data, database, logs, and app-specific files
 
+# Profile-level clutter (repo root is the user home directory)
+/.VirtualBox/
+/.android/
+/.aprswx/
+/.arduinoIDE/
+/.chocolatey/
+/.dbus-keyrings/
+/.matplotlib/
+/.streamlit/
+/.viminfo
+/.gitconfig
+/.medicaid_gps_simple_settings.json
+/Programming Projects/
+/AppData/
+/Contacts/
+/Desktop/
+/Downloads/
+/Favorites/
+/Links/
+/Music/
+/OneDrive/
+/Pictures/
+/Saved Games/
+/Searches/
+/Shutter Encoder/
+/Videos/
+/VirtualBox VMs/
+/ntuser.dat*
+/ntuser.ini
+/smoketest_activity.py
+/smoketest_activity.py
+
+# Limit Documents folder to tracked project directories
+/Documents/*
+!/Documents/CyberLabLog-main/**
+!/Documents/Programming Projects/
+/Documents/Programming Projects/*
+!/Documents/Programming Projects/Cyber Log Sept/
+!/Documents/Programming Projects/Cyber Log Sept/CyberLabLog-main/**
+
+# Nested build artifacts inside tracked legacy copy
+/Documents/Programming Projects/Cyber Log Sept/CyberLabLog-main/build/
+/Documents/Programming Projects/Cyber Log Sept/CyberLabLog-main/dist/
+/Documents/Programming Projects/Cyber Log Sept/CyberLabLog-main/digital.ico
+/Documents/Programming Projects/Cyber Log Sept/CyberLabLog-main/markerblue.png
+/Documents/Programming Projects/Cyber Log Sept/build/
+/Documents/Programming Projects/Cyber Log Sept/dist/
+
 # SQLite database
 caselog_gui_v6.db
 *.db
@@ -54,3 +102,4 @@ marker_icon.png
 !*.md
 !requirements.txt
 !README*
+smoketest_activity.py
