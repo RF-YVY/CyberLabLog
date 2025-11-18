@@ -2,8 +2,8 @@
 # IMPORTANT: Increment APP_VERSION and update RELEASE_DATE before each build for distribution!
 
 # Example:
-# APP_VERSION = "2.1.2"
-# RELEASE_DATE = "Sep 3, 2025"
+# APP_VERSION = "3.0"
+# RELEASE_DATE = "Nov 18, 2025"
 
 # --- Move Report Header Info Persistence into CaseLogApp ---
 
@@ -17,7 +17,12 @@ import ttkbootstrap as tb
 from ttkbootstrap.constants import LEFT, RIGHT, TOP, BOTTOM, X, Y, BOTH, CENTER, W, E, N, S # Add/remove as needed
 from ttkbootstrap.dialogs import Messagebox
 from ttkbootstrap.widgets import DateEntry
+import argparse
+import copy
+import csv
+import html
 import json
+import re
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog, scrolledtext
 import sqlite3
@@ -25,6 +30,7 @@ import os
 import io
 import time
 from datetime import datetime, date as datetime_date, timedelta # For isinstance check and date math
+from collections import defaultdict
 from PIL import Image, ImageTk
 import shutil
 import logging
@@ -38,9 +44,11 @@ import queue
 import calendar
 import requests
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import tkintermapview
 from tkintermapview import decimal_to_osm
+from pathlib import Path
 from geopy.geocoders import Nominatim
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as ReportLabImage
 from reportlab.lib.styles import getSampleStyleSheet
@@ -50,11 +58,10 @@ from reportlab.lib.units import inch
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.pdfbase.pdfmetrics import stringWidth
 import pandas as pd
-from typing import Any
 # --- App Constants & Paths ---
 APP_NAME = "CyberLab Case Tracker"
-APP_VERSION = "2.1.6"  # Increment before each build
-RELEASE_DATE = "Oct 23, 2025"  # Update before each build
+APP_VERSION = "3.0"  # Increment before each build
+RELEASE_DATE = "Nov 18, 2025"  # Update before each build
 # Determine a persistent base directory:
 # - When frozen by PyInstaller (--onefile), use the folder containing the executable
 #   so data (DB, app_data) persists across runs.
@@ -129,32 +136,6 @@ US_STATE_ABBREVIATIONS = [
 # Default map marker icon placeholder (PhotoImage) assigned at runtime
 DEFAULT_MARKER_ICON = None
 
-# Columns allowed to be updated in the case_log table when editing completed cases
-CASE_LOG_MUTABLE_FIELDS = (
-    "case_number",
-    "examiner",
-    "investigator",
-    "agency",
-    "city_of_offense",
-    "state_of_offense",
-    "start_date",
-    "end_date",
-    "volume_size_gb",
-    "offense_type",
-    "device_type",
-    "forensic_tool",
-    "model",
-    "os",
-    "data_recovered",
-    "fpr_complete",
-    "notes",
-)
-
-# Default options to seed editable combos when no history exists yet
-EDITABLE_COMBO_DEFAULTS = {
-    "forensic_tool": ["Cellebrite", "GrayKey"],
-}
-
 # --- Utilities: Backup and Window Icon ---
 def perform_db_backup(retention_days: int = 56, keep_last: int | None = 5) -> str | None:
     """Create a timestamped SQLite DB backup and prune old backups.
@@ -226,24 +207,12 @@ def perform_db_backup(retention_days: int = 56, keep_last: int | None = 5) -> st
 def _set_window_icon(root):
     """Set the application window icon if available (Windows-friendly)."""
     try:
-        icon_candidates = [ICON_FILENAME]
-        bundle_dir = getattr(sys, "_MEIPASS", None)
-        if bundle_dir:
-            icon_candidates.append(os.path.join(bundle_dir, "digital.ico"))
-
-        for candidate in icon_candidates:
-            if not candidate or not os.path.exists(candidate):
-                continue
+        if os.path.exists(ICON_FILENAME):
             try:
-                root.iconbitmap(candidate)
-                if candidate != ICON_FILENAME:
-                    try:
-                        shutil.copy2(candidate, ICON_FILENAME)
-                    except Exception:
-                        pass
+                root.iconbitmap(ICON_FILENAME)
                 return
             except Exception:
-                continue
+                pass
         # Fallback to logo.png as iconphoto if available
         if os.path.exists(LOGO_FILENAME):
             try:
@@ -281,7 +250,6 @@ def init_db():
                 examiner TEXT,
                 offense_type TEXT,
                 device_type TEXT,
-                forensic_tool TEXT,
                 start_date TEXT,
                 end_date TEXT,
                 volume_size_gb REAL,
@@ -334,7 +302,6 @@ def init_db():
                 examiner TEXT,
                 offense_type TEXT,
                 device_type TEXT,
-                forensic_tool TEXT,
                 start_date TEXT,
                 end_date TEXT,
                 volume_size_gb REAL,
@@ -364,12 +331,6 @@ def init_db():
 
         # Add new columns to existing in_progress_cases table if they don't exist
         try:
-            cursor.execute("ALTER TABLE case_log ADD COLUMN forensic_tool TEXT")
-            logging.info("Added forensic_tool column to case_log table.")
-        except sqlite3.OperationalError:
-            pass  # Column already exists
-
-        try:
             cursor.execute("ALTER TABLE in_progress_cases ADD COLUMN priority TEXT DEFAULT 'Medium'")
             logging.info("Added priority column to in_progress_cases table.")
         except sqlite3.OperationalError:
@@ -387,12 +348,6 @@ def init_db():
             logging.info("Added workflow_status column to in_progress_cases table.")
         except sqlite3.OperationalError:
             pass  # Column already exists
-
-        try:
-            cursor.execute("ALTER TABLE in_progress_cases ADD COLUMN forensic_tool TEXT")
-            logging.info("Ensured forensic_tool column exists on in_progress_cases table.")
-        except sqlite3.OperationalError:
-            pass
 
         conn.commit()
         # Create helpful indexes for common filters/queries (safe if already exist)
@@ -568,9 +523,9 @@ def add_case_db(case_data):
         cursor.execute('''
             INSERT INTO case_log (
                 case_number, examiner, investigator, agency, city_of_offense, state_of_offense,
-                start_date, end_date, volume_size_gb, offense_type, device_type, forensic_tool, model, os,
+                start_date, end_date, volume_size_gb, offense_type, device_type, model, os,
                 data_recovered, fpr_complete, notes, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             str(case_data.get("case_number")).strip() if case_data.get("case_number") is not None else None,
             case_data.get("examiner"),
@@ -583,7 +538,6 @@ def add_case_db(case_data):
             case_data.get("volume_size_gb"),
             case_data.get("offense_type"),
             case_data.get("device_type"),
-            case_data.get("forensic_tool"),
             case_data.get("model"),
             case_data.get("os"),
             dr_str,
@@ -633,9 +587,9 @@ def add_in_progress_case_db(case_data):
         cursor.execute('''
             INSERT INTO in_progress_cases (
                 case_number, examiner, investigator, agency, city_of_offense, state_of_offense,
-                start_date, end_date, volume_size_gb, offense_type, device_type, forensic_tool, model, os,
+                start_date, end_date, volume_size_gb, offense_type, device_type, model, os,
                 data_recovered, fpr_complete, notes, created_at, priority, target_due_date, workflow_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             str(case_data.get("case_number")).strip() if case_data.get("case_number") is not None else None,
             case_data.get("examiner"),
@@ -648,7 +602,6 @@ def add_in_progress_case_db(case_data):
             case_data.get("volume_size_gb"),
             case_data.get("offense_type"),
             case_data.get("device_type"),
-            case_data.get("forensic_tool"),
             case_data.get("model"),
             case_data.get("os"),
             dr_str,
@@ -777,7 +730,7 @@ def move_case_to_completed(case_id: int) -> bool:
             SELECT case_number, examiner, investigator, agency,
                    city_of_offense, state_of_offense,
                    start_date, end_date, volume_size_gb,
-                   offense_type, device_type, forensic_tool, model, os,
+                   offense_type, device_type, model, os,
                    data_recovered, fpr_complete, notes, created_at
             FROM in_progress_cases WHERE id = ?
             """,
@@ -792,9 +745,9 @@ def move_case_to_completed(case_id: int) -> bool:
             """
             INSERT INTO case_log (
                 case_number, examiner, investigator, agency, city_of_offense, state_of_offense,
-                start_date, end_date, volume_size_gb, offense_type, device_type, forensic_tool, model, os,
+                start_date, end_date, volume_size_gb, offense_type, device_type, model, os,
                 data_recovered, fpr_complete, notes, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             tuple(row),
         )
@@ -896,8 +849,7 @@ def update_case_db(case_id, case_data):
                 pass
             cursor = conn.cursor()
 
-            # Limit updates to columns that exist on the case_log table to avoid SQL errors
-            fields_to_update = [field for field in CASE_LOG_MUTABLE_FIELDS if field in case_data]
+            fields_to_update = [field for field in case_data.keys() if field not in ['id', 'created_at']]
             set_clause = ', '.join([f'{field} = ?' for field in fields_to_update])
             if not set_clause:
                 logging.warning(f"No valid fields to update for case ID {case_id}.")
@@ -1139,6 +1091,1816 @@ def set_json_setting(key, obj):
     except Exception:
         logging.warning(f"Failed to save json setting '{key}'")
 
+def load_report_header_info() -> dict:
+    """Return the persisted report header info (with today's date filled in)."""
+    info = get_user_pref('report_header_info')
+    if isinstance(info, str):
+        try:
+            info = json.loads(info)
+        except Exception:
+            info = {}
+    if not isinstance(info, dict):
+        info = {}
+    result = info.copy()
+    result.setdefault("Name", "")
+    result.setdefault("Agency", "")
+    result.setdefault("Division", "")
+    result["Date"] = datetime.now().strftime('%Y-%m-%d')
+    return result
+
+GRAPH_TYPE_CHOICES = [
+    "Offense Type",
+    "Device Type",
+    "OS",
+    "Agency",
+    "State of Offense",
+    "Examiner",
+    "Investigator",
+    "Year",
+    "City of Offense",
+    "Total Volume (GB/TB)",
+    "Total Volume by Examiner",
+    "Total Volume by Investigator",
+    "Total Volume by Agency",
+    "Total Volume by Device Type",
+]
+
+GRAPH_VOLUME_GROUP_TYPES = {
+    "Total Volume by Examiner": "examiner",
+    "Total Volume by Investigator": "investigator",
+    "Total Volume by Agency": "agency",
+    "Total Volume by Device Type": "device_type",
+}
+
+GRAPH_TOTAL_VOLUME_LABEL = "Total Volume (GB/TB)"
+
+DEFAULT_GRAPH_EXPORT_SETTINGS = {
+    "types": ["Offense Type", "Device Type", "Agency"],
+    "year_filter": "All",
+    "include_png": True,
+    "include_csv": True,
+}
+
+DEFAULT_MAP_EXPORT_SETTINGS = {
+    "include_completed": True,
+    "include_in_progress": True,
+    "include_case_details": True,
+    "include_data_file": True,
+}
+
+WEEKDAY_CHOICES = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+]
+
+WEEKDAY_NAME_TO_INDEX = {name: idx for idx, name in enumerate(WEEKDAY_CHOICES)}
+INDEX_TO_WEEKDAY = {idx: name for name, idx in WEEKDAY_NAME_TO_INDEX.items()}
+
+MONTH_DAY_CHOICES = [str(i) for i in range(1, 32)] + ["Last Day"]
+
+AUTOMATED_REPORT_TYPES = {
+    "total_summary_pdf": "Total Case Summary (PDF)",
+    "total_summary_xlsx": "Total Case Summary (Excel)",
+    "all_cases_pdf": "All Cases Summary (PDF)",
+    "graphs_snapshot": "Graph Snapshots (PNG/CSV)",
+    "map_html": "Case Map (HTML)",
+}
+
+REPORT_TYPE_DEFAULT_SUBDIRS = {
+    "total_summary_pdf": "",
+    "total_summary_xlsx": "",
+    "all_cases_pdf": "",
+    "graphs_snapshot": "graphs",
+    "map_html": "map",
+}
+
+
+DATE_RANGE_MODE_LABELS = {
+    "current_week": "Current Week",
+    "current_month": "Current Month",
+    "all": "All Cases",
+}
+
+
+DEFAULT_AUTOMATED_REPORTS_CONFIG = {
+    "output_dir": os.path.join(DATA_DIR, "automated_reports"),
+    "report_types": ["total_summary_pdf", "all_cases_pdf"],
+    "frequency": "weekly",
+    "recent_only": False,
+    "recent_days": 7,
+    "page_size": "Letter",
+    "orientation": "Auto",
+    "last_run_iso": "",
+    "next_run_iso": "",
+    "schedule_weekday": WEEKDAY_CHOICES[0],
+    "schedule_month_day": "1",
+    "date_range_mode": "current_week",
+    "report_output_dirs": {},
+    "graph_settings": DEFAULT_GRAPH_EXPORT_SETTINGS.copy(),
+    "map_settings": DEFAULT_MAP_EXPORT_SETTINGS.copy(),
+}
+
+
+def load_automated_reports_config() -> dict:
+    """Return persisted automated report settings merged with defaults."""
+    stored = get_json_setting('automated_reports', {})
+    if not isinstance(stored, dict):
+        stored = {}
+    legacy_use_date_range = bool(stored.get('use_date_range'))
+    merged = copy.deepcopy(DEFAULT_AUTOMATED_REPORTS_CONFIG)
+
+    for key, value in stored.items():
+        if key not in DEFAULT_AUTOMATED_REPORTS_CONFIG:
+            continue
+        if key == 'graph_settings' and isinstance(value, dict):
+            graph_defaults = DEFAULT_AUTOMATED_REPORTS_CONFIG['graph_settings']
+            graph_settings = graph_defaults.copy()
+            graph_settings.update({k: v for k, v in value.items() if k in graph_defaults})
+            merged['graph_settings'] = graph_settings
+        elif key == 'map_settings' and isinstance(value, dict):
+            map_defaults = DEFAULT_AUTOMATED_REPORTS_CONFIG['map_settings']
+            map_settings = map_defaults.copy()
+            map_settings.update({k: v for k, v in value.items() if k in map_defaults})
+            merged['map_settings'] = map_settings
+        elif key == 'report_output_dirs' and isinstance(value, dict):
+            merged['report_output_dirs'] = {
+                k: str(v).strip()
+                for k, v in value.items()
+                if isinstance(k, str) and isinstance(v, str) and str(v).strip()
+            }
+        else:
+            merged[key] = value
+
+    report_types = merged.get('report_types') or []
+    merged['report_types'] = [rt for rt in report_types if rt in AUTOMATED_REPORT_TYPES]
+    if not merged['report_types']:
+        merged['report_types'] = DEFAULT_AUTOMATED_REPORTS_CONFIG['report_types'][:]
+    merged['last_run_iso'] = merged.get('last_run_iso', "") or ""
+    merged['next_run_iso'] = merged.get('next_run_iso', "") or ""
+
+    weekday_value = merged.get('schedule_weekday', WEEKDAY_CHOICES[0])
+    if weekday_value not in WEEKDAY_CHOICES:
+        weekday_value = WEEKDAY_CHOICES[0]
+    merged['schedule_weekday'] = weekday_value
+
+    month_day_value = str(merged.get('schedule_month_day', "1") or "1").strip()
+    if month_day_value.lower() in {"last", "last day"}:
+        month_day_value = "Last Day"
+    elif month_day_value not in MONTH_DAY_CHOICES:
+        month_day_value = "1"
+    merged['schedule_month_day'] = month_day_value
+    mode_candidate = str(merged.get('date_range_mode', "current_week") or "current_week").lower()
+    if mode_candidate not in DATE_RANGE_MODE_LABELS:
+        mode_candidate = "all" if legacy_use_date_range else "current_week"
+    merged['date_range_mode'] = mode_candidate
+    return merged
+
+
+def save_automated_reports_config(config: dict) -> None:
+    """Persist automated report settings after merging with defaults."""
+    if not isinstance(config, dict):
+        raise ValueError("config must be a dictionary")
+    merged = copy.deepcopy(DEFAULT_AUTOMATED_REPORTS_CONFIG)
+
+    for key, value in config.items():
+        if key not in DEFAULT_AUTOMATED_REPORTS_CONFIG:
+            continue
+        if key == 'graph_settings' and isinstance(value, dict):
+            graph_defaults = DEFAULT_AUTOMATED_REPORTS_CONFIG['graph_settings']
+            graph_settings = graph_defaults.copy()
+            graph_settings.update({k: v for k, v in value.items() if k in graph_defaults})
+            # Sanitize types selection
+            selection = graph_settings.get('types') or []
+            graph_settings['types'] = [t for t in selection if t in GRAPH_TYPE_CHOICES]
+            if not graph_settings['types']:
+                graph_settings['types'] = graph_defaults['types'][:]
+            graph_settings['year_filter'] = (graph_settings.get('year_filter') or "All").strip() or "All"
+            graph_settings['include_png'] = bool(graph_settings.get('include_png', True))
+            graph_settings['include_csv'] = bool(graph_settings.get('include_csv', True))
+            merged['graph_settings'] = graph_settings
+        elif key == 'map_settings' and isinstance(value, dict):
+            map_defaults = DEFAULT_AUTOMATED_REPORTS_CONFIG['map_settings']
+            map_settings = map_defaults.copy()
+            map_settings.update({k: v for k, v in value.items() if k in map_defaults})
+            map_settings['include_completed'] = bool(map_settings.get('include_completed', True))
+            map_settings['include_in_progress'] = bool(map_settings.get('include_in_progress', True))
+            map_settings['include_case_details'] = bool(map_settings.get('include_case_details', True))
+            map_settings['include_data_file'] = bool(map_settings.get('include_data_file', True))
+            merged['map_settings'] = map_settings
+        elif key == 'report_output_dirs' and isinstance(value, dict):
+            merged['report_output_dirs'] = {
+                k: str(v).strip()
+                for k, v in value.items()
+                if isinstance(k, str) and isinstance(v, str) and str(v).strip()
+            }
+        else:
+            merged[key] = value
+
+    report_types = merged.get('report_types') or []
+    merged['report_types'] = [rt for rt in report_types if rt in AUTOMATED_REPORT_TYPES]
+    if not merged['report_types']:
+        merged['report_types'] = DEFAULT_AUTOMATED_REPORTS_CONFIG['report_types'][:]
+
+    weekday_value = merged.get('schedule_weekday', WEEKDAY_CHOICES[0])
+    if weekday_value not in WEEKDAY_CHOICES:
+        weekday_value = WEEKDAY_CHOICES[0]
+    merged['schedule_weekday'] = weekday_value
+
+    month_day_value = str(merged.get('schedule_month_day', "1") or "1").strip()
+    if month_day_value.lower() in {"last", "last day"}:
+        month_day_value = "Last Day"
+    elif month_day_value not in MONTH_DAY_CHOICES:
+        month_day_value = "1"
+    merged['schedule_month_day'] = month_day_value
+    mode_candidate = str(merged.get('date_range_mode', "current_week") or "current_week").lower()
+    if mode_candidate not in DATE_RANGE_MODE_LABELS:
+        mode_candidate = "all"
+    merged['date_range_mode'] = mode_candidate
+
+    set_json_setting('automated_reports', merged)
+
+
+AUTOMATION_POLL_INTERVAL_MS = 60000  # Check automation schedule every 60 seconds
+
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        try:
+            return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return None
+
+
+def _format_iso(dt: datetime | None) -> str:
+    if not dt:
+        return ""
+    return dt.replace(microsecond=0).isoformat(sep=" ")
+
+
+def _add_one_month(dt: datetime) -> datetime:
+    year = dt.year + (dt.month // 12)
+    month = (dt.month % 12) + 1
+    day = min(dt.day, calendar.monthrange(year, month)[1])
+    return dt.replace(year=year, month=month, day=day)
+
+
+def _calculate_next_automation_run(
+    frequency: str,
+    last_run: datetime | None,
+    now: datetime | None = None,
+    schedule_options: dict | None = None,
+) -> datetime | None:
+    frequency = (frequency or "manual").lower()
+    if frequency == "manual":
+        return None
+
+    now = now or datetime.now()
+    schedule_options = schedule_options or {}
+
+    if last_run is None:
+        last_run = now
+
+    reference_time = last_run.time()
+
+    if frequency == "daily":
+        candidate = datetime.combine(now.date(), reference_time)
+        if candidate <= now:
+            candidate += timedelta(days=1)
+        return candidate
+
+    if frequency == "weekly":
+        weekday = schedule_options.get("weekday")
+        if isinstance(weekday, str):
+            weekday = WEEKDAY_NAME_TO_INDEX.get(weekday)
+        if not isinstance(weekday, int):
+            weekday = last_run.weekday()
+
+        base = datetime.combine(now.date(), reference_time)
+        days_ahead = (weekday - base.weekday()) % 7
+        candidate = base + timedelta(days=days_ahead)
+        if candidate <= now:
+            candidate += timedelta(days=7)
+        return candidate
+
+    if frequency == "monthly":
+        month_day = schedule_options.get("month_day", "1")
+        if isinstance(month_day, str) and month_day.lower() in {"last", "last day"}:
+            day_value: int | str = "last"
+        else:
+            try:
+                day_value = max(1, min(31, int(month_day)))
+            except Exception:
+                day_value = 1
+
+        year = now.year
+        month = now.month
+
+        def _resolve_day(y: int, m: int) -> int:
+            last_day = calendar.monthrange(y, m)[1]
+            if day_value == "last":
+                return last_day
+            return min(int(day_value), last_day)
+
+        day = _resolve_day(year, month)
+        candidate = datetime(year, month, day, reference_time.hour, reference_time.minute, reference_time.second)
+        if candidate <= now:
+            if month == 12:
+                year += 1
+                month = 1
+            else:
+                month += 1
+            day = _resolve_day(year, month)
+            candidate = datetime(year, month, day, reference_time.hour, reference_time.minute, reference_time.second)
+        return candidate
+
+    return None
+
+
+def _ensure_parent_dir(path: str) -> None:
+    """Ensure the parent directory for the given file path exists."""
+    try:
+        directory = os.path.dirname(os.path.abspath(path))
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+    except Exception as exc:
+        logging.debug(f"Could not create parent folder for {path}: {exc}")
+
+
+def _remove_matching_files(directory: str, patterns: list[str]) -> None:
+    """Delete files in *directory* that match any glob pattern in *patterns*."""
+    try:
+        dir_path = Path(directory)
+        if not dir_path.exists():
+            return
+        for pattern in patterns:
+            for file_path in dir_path.glob(pattern):
+                try:
+                    file_path.unlink()
+                except Exception as exc:
+                    logging.debug("Unable to remove export %s: %s", file_path, exc)
+    except Exception as exc:
+        logging.debug("Failed to clean exports in %s: %s", directory, exc)
+
+
+def generate_total_case_summary_pdf(
+    cases,
+    start_date,
+    end_date,
+    recent_only,
+    recent_days,
+    header_info,
+    filename,
+    page_size="Letter",
+    orientation="Auto",
+):
+    """Create the Total Case Summary PDF at the requested path."""
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.pagesizes import letter, legal, A4, landscape, portrait
+    from reportlab.lib import colors
+    from reportlab.lib.units import inch
+
+    header = header_info or {}
+    _ensure_parent_dir(filename)
+
+    size_map = {"Letter": letter, "Legal": legal, "A4": A4}
+    base_size = size_map.get(page_size, letter)
+    use_landscape = True if orientation == "Landscape" else False
+    if orientation == "Auto":
+        use_landscape = bool(recent_only)
+    pagesize = landscape(base_size) if use_landscape else portrait(base_size)
+
+    doc = SimpleDocTemplate(
+        filename,
+        pagesize=pagesize,
+        leftMargin=20,
+        rightMargin=20,
+        topMargin=24,
+        bottomMargin=24,
+    )
+    elements = []
+    styles = getSampleStyleSheet()
+    page_width = pagesize[0] - doc.leftMargin - doc.rightMargin
+
+    header_lines = [
+        f"Name: {header.get('Name', '')}",
+        f"Agency: {header.get('Agency', '')}",
+        f"Division: {header.get('Division', '')}",
+        f"Date: {header.get('Date', datetime.now().strftime('%Y-%m-%d'))}",
+    ]
+    header_table = Table([[Paragraph(line, styles["Normal"])] for line in header_lines], hAlign='LEFT')
+    elements.append(header_table)
+    elements.append(Spacer(1, 12))
+
+    # Logo/title block
+    try:
+        title = "Total Case Summary"
+        if start_date or end_date:
+            title += f" ({start_date or '...'} to {end_date or '...'})"
+        if recent_only:
+            title += f" (Recent {recent_days} days)"
+        from reportlab.lib.styles import ParagraphStyle
+
+        small_title_style = ParagraphStyle('SmallTitle', parent=styles["Title"], fontSize=14, leading=16, alignment=1, wordWrap='CJK')
+        title_para = Paragraph(f"<b>{title}</b>", small_title_style)
+        if os.path.exists(LOGO_FILENAME):
+            from PIL import Image as PILImage
+
+            pil_img = PILImage.open(LOGO_FILENAME)
+            orig_w, orig_h = pil_img.size
+            max_dim = 1.1 * inch
+            if orig_w > orig_h:
+                logo_width = max_dim
+                logo_height = max_dim * (orig_h / orig_w)
+            else:
+                logo_height = max_dim
+                logo_width = max_dim * (orig_w / orig_h)
+            img = RLImage(LOGO_FILENAME, width=logo_width, height=logo_height)
+            logo_table = Table(
+                [[title_para, img]],
+                colWidths=[None, logo_width],
+            )
+            logo_table.setStyle(
+                TableStyle(
+                    [
+                        ("ALIGN", (0, 0), (0, 0), "LEFT"),
+                        ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+                        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                        ("LEFTPADDING", (1, 0), (1, 0), 6),
+                        ("RIGHTPADDING", (1, 0), (1, 0), 0),
+                        ("TOPPADDING", (0, 0), (-1, -1), 2),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                    ]
+                )
+            )
+            elements.append(logo_table)
+            elements.append(Spacer(1, 12))
+        else:
+            elements.append(title_para)
+            elements.append(Spacer(1, 12))
+    except Exception:
+        elements.append(Paragraph("<b>Total Case Summary</b>", styles["Title"]))
+        elements.append(Spacer(1, 12))
+
+    total_cases = len(cases)
+    total_gb = sum(safe_float_conversion(c.get('volume_size_gb')) for c in cases)
+    total_tb = total_gb / 1024 if total_gb > 999 else None
+    elements.append(Paragraph(f"<b>Total Devices:</b> {total_cases}", styles["Normal"]))
+    if total_tb:
+        elements.append(Paragraph(f"<b>Total Volume:</b> {total_tb:.2f} TB", styles["Normal"]))
+    else:
+        elements.append(Paragraph(f"<b>Total Volume:</b> {total_gb:.2f} GB", styles["Normal"]))
+
+    from datetime import datetime as dt
+
+    def _parse_iso_date(value):
+        if not value:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        candidates = [
+            (text[:10], '%Y-%m-%d'),
+            (text[:19], '%Y-%m-%d %H:%M:%S'),
+            (text[:10], '%m-%d-%Y'),
+        ]
+        for sample, fmt in candidates:
+            try:
+                return dt.strptime(sample, fmt).date()
+            except ValueError:
+                continue
+        return None
+
+    def _accumulate_turnaround(dataset, field):
+        stats = {}
+        for case in dataset:
+            start = _parse_iso_date(case.get('start_date'))
+            end = _parse_iso_date(case.get('end_date'))
+            if not start or not end or end < start:
+                continue
+            elapsed = (end - start).days
+            key = (case.get(field) or 'Unknown').strip() or 'Unknown'
+            bucket = stats.setdefault(key, {'total': 0, 'count': 0})
+            bucket['total'] += elapsed
+            bucket['count'] += 1
+        return stats
+
+    turnaround_sections = [
+        ("Average Turnaround by Agency", _accumulate_turnaround(cases, 'agency')),
+        ("Average Turnaround by Forensic Tool", _accumulate_turnaround(cases, 'forensic_tool')),
+    ]
+
+    benchmarks_added = False
+    for heading, stats in turnaround_sections:
+        if not stats:
+            continue
+        if not benchmarks_added:
+            elements.append(Spacer(1, 8))
+            elements.append(Paragraph("<b>Benchmarking</b>", styles["Heading2"]))
+            benchmarks_added = True
+        rows = [["Value", "Avg Days", "Cases"]]
+        sorted_items = sorted(
+            stats.items(),
+            key=lambda item: ((item[1]['total'] / item[1]['count']) if item[1]['count'] else float('inf'), item[0].lower()),
+        )
+        for key, data in sorted_items:
+            avg_days = data['total'] / data['count'] if data['count'] else 0
+            rows.append([key, f"{avg_days:.1f}", str(data['count'])])
+        table = Table(rows, colWidths=[max(2.0 * inch, page_width * 0.45), 1.0 * inch, 0.9 * inch])
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                    ("FONTSIZE", (0, 0), (-1, -1), 9),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ]
+            )
+        )
+        elements.append(Paragraph(f"<b>{heading}</b>", styles["Heading3"]))
+        elements.append(table)
+        elements.append(Spacer(1, 6))
+
+    aging_threshold_days = 7
+    aging_entries = []
+    today = dt.now().date()
+    try:
+        active_cases = get_all_in_progress_cases_db() or []
+    except Exception:
+        active_cases = []
+    for case in active_cases:
+        due = _parse_iso_date(case.get('target_due_date'))
+        if not due:
+            continue
+        delta = (due - today).days
+        if delta < 0:
+            status = "Overdue"
+            days_display = str(abs(delta))
+        elif delta == 0:
+            status = "Due Today"
+            days_display = "0"
+        elif delta <= aging_threshold_days:
+            status = "Due Soon"
+            days_display = str(delta)
+        else:
+            continue
+        aging_entries.append(
+            {
+                'case': case.get('case_number', ''),
+                'examiner': case.get('examiner', ''),
+                'agency': case.get('agency', ''),
+                'due': format_date_str_for_display(case.get('target_due_date', '')),
+                'status': status,
+                'days': days_display,
+                'priority': case.get('priority', ''),
+                'tool': case.get('forensic_tool', ''),
+                'sort': delta,
+            }
+        )
+
+    if aging_entries:
+        status_order = {"Overdue": 0, "Due Today": 1, "Due Soon": 2}
+        aging_entries.sort(key=lambda entry: (status_order.get(entry['status'], 99), entry['sort']))
+        table_rows = [["Case #", "Examiner", "Agency", "Due Date", "Status", "Days", "Priority", "Forensic Tool"]]
+        table_rows.extend(
+            [
+                [
+                    entry['case'],
+                    entry['examiner'],
+                    entry['agency'],
+                    entry['due'],
+                    entry['status'],
+                    entry['days'],
+                    entry['priority'],
+                    entry['tool'],
+                ]
+                for entry in aging_entries
+            ]
+        )
+        elements.append(Spacer(1, 8))
+        elements.append(Paragraph("<b>Case Aging Alerts (Next 7 Days / Overdue)</b>", styles["Heading2"]))
+        col_widths = [0.9 * inch, 1.2 * inch, 1.2 * inch, 1.0 * inch, 1.0 * inch, 0.8 * inch, 0.9 * inch, 1.3 * inch]
+        aging_table = Table(table_rows, colWidths=col_widths, repeatRows=1)
+        aging_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("ALIGN", (5, 1), (5, -1), "CENTER"),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ]
+            )
+        )
+        elements.append(aging_table)
+        elements.append(Spacer(1, 10))
+
+    def breakdown(field):
+        d = {}
+        for c in cases:
+            v = (c.get(field) or '').strip()
+            if v:
+                d[v] = d.get(v, 0) + 1
+        return sorted(d.items(), key=lambda x: x[1], reverse=True)
+
+    for field, label in [
+        ("examiner", "Examiner"),
+        ("agency", "Agency"),
+        ("offense_type", "Offense Type"),
+        ("device_type", "Device Type"),
+        ("forensic_tool", "Forensic Tool"),
+    ]:
+        items = breakdown(field)
+        if items:
+            elements.append(Spacer(1, 8))
+            elements.append(Paragraph(f"<b>{label} Breakdown:</b>", styles["Normal"]))
+            count_col_w = 1.2 * inch
+            value_col_w = max(1.5 * inch, page_width - count_col_w)
+            t = Table([[k, v] for k, v in items], colWidths=[value_col_w, count_col_w])
+            t.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+                        ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                        ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+                        ("FONTSIZE", (0, 0), (-1, -1), 9),
+                        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                    ]
+                )
+            )
+            elements.append(t)
+
+    if recent_only:
+        elements.append(Spacer(1, 12))
+        elements.append(Paragraph(f"<b>Recent Cases (last {recent_days} days):</b>", styles["Normal"]))
+        headers = ["Case #", "Created", "Examiner", "Offense", "Forensic Tool", "Vol (GB)"]
+        rows = []
+        for c in cases:
+            rows.append(
+                [
+                    c.get('case_number', ''),
+                    format_date_str_for_display(c.get('created_at', '')),
+                    c.get('examiner', ''),
+                    c.get('offense_type', ''),
+                    c.get('forensic_tool', ''),
+                    c.get('volume_size_gb', ''),
+                ]
+            )
+
+        min_w = 0.6 * inch
+        max_w = (2.6 if use_landscape else 2.0) * inch
+        col_weights = []
+        for ci in range(len(headers)):
+            max_len = len(str(headers[ci]))
+            for r in rows:
+                val = '' if ci >= len(r) or r[ci] is None else str(r[ci])
+                if len(val) > max_len:
+                    max_len = len(val)
+            col_weights.append(max(0.6, min(3.0, max_len / 10)))
+        total_weight = sum(col_weights) or 1.0
+        raw_widths = [(w / total_weight) * page_width for w in col_weights]
+        col_widths = [max(min_w, min(max_w, w)) for w in raw_widths]
+        total_w = sum(col_widths)
+        if total_w < page_width:
+            gap = page_width - total_w
+            widest_idx = max(range(len(col_widths)), key=lambda i: col_widths[i])
+            col_widths[widest_idx] += gap
+
+        from reportlab.lib.styles import ParagraphStyle
+
+        header_style = ParagraphStyle('HeaderSmall', fontName='Helvetica-Bold', fontSize=8, leading=9, alignment=1, wordWrap='CJK')
+        wrapped_headers = [Paragraph(h, header_style) for h in headers]
+        t = Table([wrapped_headers] + rows, colWidths=col_widths, repeatRows=1, splitByRow=True)
+        t.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                    ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                    ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ]
+            )
+        )
+        elements.append(t)
+
+    doc.build(elements)
+    logging.info(f"Total case summary PDF written to {filename}")
+    return filename
+
+
+def generate_total_case_summary_xlsx(
+    cases,
+    start_date,
+    end_date,
+    recent_only,
+    recent_days,
+    filename,
+):
+    """Create the Total Case Summary Excel workbook."""
+    import pandas as pd
+
+    _ensure_parent_dir(filename)
+
+    total_cases = len(cases)
+    total_gb = sum(safe_float_conversion(c.get('volume_size_gb')) for c in cases)
+    total_tb = total_gb / 1024 if total_gb > 999 else None
+    summary = {
+        "Total Devices": [total_cases],
+        "Total Volume (GB)": [total_gb],
+        "Total Volume (TB)": [total_tb if total_tb else ''],
+    }
+    df_summary = pd.DataFrame(summary)
+
+    def breakdown(field):
+        d = {}
+        for c in cases:
+            v = (c.get(field) or '').strip()
+            if v:
+                d[v] = d.get(v, 0) + 1
+        return sorted(d.items(), key=lambda x: x[1], reverse=True)
+
+    with pd.ExcelWriter(filename) as writer:
+        df_summary.to_excel(writer, sheet_name="Summary", index=False)
+        for field, label in [
+            ("examiner", "Examiner"),
+            ("agency", "Agency"),
+            ("offense_type", "Offense Type"),
+            ("device_type", "Device Type"),
+            ("forensic_tool", "Forensic Tool"),
+        ]:
+            items = breakdown(field)
+            if items:
+                df = pd.DataFrame(items, columns=[label, "Count"])
+                df.to_excel(writer, sheet_name=label, index=False)
+        if recent_only:
+            rows = []
+            for c in cases:
+                rows.append(
+                    {
+                        "Case #": c.get('case_number', ''),
+                        "Created": format_date_str_for_display(c.get('created_at', '')),
+                        "Examiner": c.get('examiner', ''),
+                        "Offense": c.get('offense_type', ''),
+                        "Forensic Tool": c.get('forensic_tool', ''),
+                        "Vol (GB)": c.get('volume_size_gb', ''),
+                    }
+                )
+            df_recent = pd.DataFrame(rows)
+            df_recent.to_excel(writer, sheet_name=f"Recent_{recent_days}d", index=False)
+
+    logging.info(f"Total case summary XLSX written to {filename}")
+    return filename
+
+
+def generate_all_cases_summary_pdf(
+    completed_cases,
+    in_progress_cases,
+    header_info,
+    filename,
+    page_size="Letter",
+    orientation="Auto",
+):
+    """Create the All Cases Summary PDF that mirrors the interactive export."""
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.pagesizes import letter, legal, A4, landscape, portrait
+    from reportlab.lib import colors
+    from reportlab.lib.units import inch
+
+    header = header_info or {}
+    _ensure_parent_dir(filename)
+
+    in_progress_cases = in_progress_cases or []
+    size_map = {"Letter": letter, "Legal": legal, "A4": A4}
+    base_size = size_map.get(page_size, letter)
+    use_landscape = True if orientation == "Landscape" else False
+    if orientation == "Auto":
+        use_landscape = bool(in_progress_cases)
+    pagesize = landscape(base_size) if use_landscape else portrait(base_size)
+
+    doc = SimpleDocTemplate(
+        filename,
+        pagesize=pagesize,
+        leftMargin=20,
+        rightMargin=20,
+        topMargin=24,
+        bottomMargin=24,
+    )
+    styles = getSampleStyleSheet()
+    page_width = pagesize[0] - doc.leftMargin - doc.rightMargin
+    elements = []
+
+    header_lines = [
+        f"Name: {header.get('Name', '')}",
+        f"Agency: {header.get('Agency', '')}",
+        f"Division: {header.get('Division', '')}",
+        f"Date: {header.get('Date', datetime.now().strftime('%Y-%m-%d'))}",
+    ]
+    header_table = Table([[Paragraph(line, styles["Normal"])] for line in header_lines])
+    elements.append(header_table)
+    elements.append(Spacer(1, 10))
+
+    try:
+        title = "All Cases Summary"
+        title_para = Paragraph(f"<b>{title}</b>", styles["Title"])
+        if os.path.exists(LOGO_FILENAME):
+            logo_width = 1.1 * inch
+            img = RLImage(LOGO_FILENAME, width=logo_width, height=logo_width)
+            title_table = Table([[title_para, img]], colWidths=[None, logo_width])
+            title_table.setStyle(
+                TableStyle(
+                    [
+                        ("ALIGN", (0, 0), (0, 0), "LEFT"),
+                        ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+                        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ]
+                )
+            )
+            elements.append(title_table)
+        else:
+            elements.append(title_para)
+    except Exception:
+        elements.append(Paragraph("<b>All Cases Summary</b>", styles["Title"]))
+    elements.append(Spacer(1, 12))
+
+    all_cases = list(completed_cases) + list(in_progress_cases)
+    total_cases = len(all_cases)
+    total_gb = sum(safe_float_conversion(c.get('volume_size_gb')) for c in all_cases)
+    total_tb = total_gb / 1024 if total_gb > 999 else None
+    elements.append(Paragraph(f"<b>Total Devices:</b> {total_cases}", styles["Normal"]))
+    vol_text = f"{total_tb:.2f} TB" if total_tb else f"{total_gb:.2f} GB"
+    elements.append(Paragraph(f"<b>Total Volume:</b> {vol_text}", styles["Normal"]))
+    elements.append(Spacer(1, 8))
+
+    def breakdown(items, field):
+        d = {}
+        for c in items:
+            v = (c.get(field) or '').strip() or 'Unknown'
+            d[v] = d.get(v, 0) + 1
+        return sorted(d.items(), key=lambda kv: (-kv[1], kv[0].lower()))
+
+    for field, label in [
+        ("examiner", "Examiner"),
+        ("agency", "Agency"),
+        ("offense_type", "Offense Type"),
+        ("device_type", "Device Type"),
+        ("forensic_tool", "Forensic Tool"),
+    ]:
+        pairs = breakdown(all_cases, field)
+        if not pairs:
+            continue
+        count_col_w = 1.2 * inch
+        value_col_w = max(1.5 * inch, page_width - count_col_w)
+        table = Table([[ 'Value', 'Count' ]] + [[k, v] for k, v in pairs], colWidths=[value_col_w, count_col_w])
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                    ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ]
+            )
+        )
+        elements.append(Paragraph(f"<b>{label} Breakdown</b>", styles["Heading3"]))
+        elements.append(table)
+        elements.append(Spacer(1, 8))
+
+    headers = ["#", "Case #", "Created", "Examiner", "Agency", "Offense", "Device"]
+    rows = [headers]
+    for i, case in enumerate(completed_cases, 1):
+        rows.append(
+            [
+                str(i),
+                case.get('case_number', ''),
+                format_date_str_for_display(case.get('start_date') or case.get('created_at', '')),
+                case.get('examiner', ''),
+                case.get('agency', ''),
+                case.get('offense_type', ''),
+                case.get('device_type', ''),
+            ]
+        )
+    elements.append(Paragraph("<b>Completed Case Details</b>", styles["Heading2"]))
+    min_w = 0.4 * inch
+    max_w = (2.5 if use_landscape else 2.0) * inch
+    col_weights = []
+    for ci in range(len(headers)):
+        max_len = len(str(rows[0][ci]))
+        for r in rows[1:]:
+            val = '' if ci >= len(r) or r[ci] is None else str(r[ci])
+            if len(val) > max_len:
+                max_len = len(val)
+        col_weights.append(max(0.6, min(3.0, max_len / 10)))
+    total_weight = sum(col_weights) or 1.0
+    raw_widths = [(w / total_weight) * page_width for w in col_weights]
+    col_widths = [max(min_w, min(max_w, w)) for w in raw_widths]
+    total_w = sum(col_widths)
+    if total_w < page_width:
+        gap = page_width - total_w
+        widest_idx = max(range(len(col_widths)), key=lambda i: col_widths[i])
+        col_widths[widest_idx] += gap
+    table_completed = Table(rows, colWidths=col_widths, repeatRows=1, splitByRow=True)
+    table_completed.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ]
+        )
+    )
+    elements.append(table_completed)
+
+    if in_progress_cases:
+        ip_headers = [
+            "#",
+            "Case #",
+            "Created",
+            "Examiner",
+            "Agency",
+            "Offense",
+            "Device",
+            "Priority",
+            "Workflow",
+            "Target Due",
+        ]
+        ip_rows = [ip_headers]
+        for i, case in enumerate(in_progress_cases, 1):
+            ip_rows.append(
+                [
+                    str(i),
+                    case.get('case_number', ''),
+                    format_date_str_for_display(case.get('created_at', '')),
+                    case.get('examiner', ''),
+                    case.get('agency', ''),
+                    case.get('offense_type', ''),
+                    case.get('device_type', ''),
+                    case.get('priority', ''),
+                    case.get('workflow_status', ''),
+                    format_date_str_for_display(case.get('target_due_date', '')),
+                ]
+            )
+        elements.append(Paragraph("<b>In-Progress Case Details</b>", styles["Heading2"]))
+        min_w = 0.4 * inch
+        max_w = 2.2 * inch
+        col_weights = []
+        for ci in range(len(ip_headers)):
+            max_len = len(str(ip_rows[0][ci]))
+            for r in ip_rows[1:]:
+                val = '' if ci >= len(r) or r[ci] is None else str(r[ci])
+                if len(val) > max_len:
+                    max_len = len(val)
+            col_weights.append(max(0.6, min(3.0, max_len / 10)))
+        total_weight = sum(col_weights) or 1.0
+        raw_widths = [(w / total_weight) * page_width for w in col_weights]
+        ip_col_widths = [max(min_w, min(max_w, w)) for w in raw_widths]
+        total_w = sum(ip_col_widths)
+        if total_w < page_width:
+            gap = page_width - total_w
+            widest_idx = max(range(len(ip_col_widths)), key=lambda i: ip_col_widths[i])
+            ip_col_widths[widest_idx] += gap
+        table_ip = Table(ip_rows, colWidths=ip_col_widths, repeatRows=1, splitByRow=True)
+        table_ip.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ]
+            )
+        )
+        elements.append(table_ip)
+
+    doc.build(elements)
+    logging.info(f"All cases summary PDF written to {filename}")
+    return filename
+
+
+def run_automated_exports(
+    output_dir: str | None = None,
+    include_recent_days: int | None = None,
+    page_size: str | None = None,
+    orientation: str | None = None,
+    report_types: list[str] | None = None,
+    recent_only: bool | None = None,
+):
+    """Generate summary reports headlessly."""
+    config = load_automated_reports_config()
+
+    output_dir = output_dir or config["output_dir"]
+    page_size = page_size or config["page_size"]
+    orientation = orientation or config["orientation"]
+    include_recent_days = config["recent_days"] if include_recent_days is None else include_recent_days
+    recent_only_flag = config["recent_only"] if recent_only is None else recent_only
+    report_types = report_types or config["report_types"]
+    report_types = [rt for rt in report_types if rt in AUTOMATED_REPORT_TYPES]
+    report_types = list(dict.fromkeys(report_types))
+    if not report_types:
+        raise ValueError("No report types selected for automated export run.")
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    per_type_dirs = config.get("report_output_dirs") or {}
+    range_mode = str(config.get("date_range_mode", DEFAULT_AUTOMATED_REPORTS_CONFIG['date_range_mode']) or 'current_week').lower()
+    run_reference = datetime.now()
+    range_start_dt, range_end_dt = _resolve_automation_date_range(range_mode, run_reference)
+    range_start_str = range_start_dt.strftime('%Y-%m-%d') if range_start_dt else ""
+    range_end_str = range_end_dt.strftime('%Y-%m-%d') if range_end_dt else ""
+
+    def _resolve_output_dir(report_type: str) -> str:
+        custom_path = str(per_type_dirs.get(report_type, "")).strip() if isinstance(per_type_dirs, dict) else ""
+        if custom_path:
+            if not os.path.isabs(custom_path):
+                target_dir = os.path.abspath(os.path.join(output_dir, custom_path))
+            else:
+                target_dir = os.path.abspath(custom_path)
+        else:
+            default_subdir = REPORT_TYPE_DEFAULT_SUBDIRS.get(report_type, "")
+            if default_subdir:
+                target_dir = os.path.join(output_dir, default_subdir)
+            else:
+                target_dir = output_dir
+        os.makedirs(target_dir, exist_ok=True)
+        return target_dir
+
+    logging.info(
+        "Starting automated export run (output=%s, reports=%s, range=%s)",
+        output_dir,
+        ', '.join(report_types),
+        range_mode,
+    )
+
+    completed_cases_all = get_all_cases_db() or []
+    in_progress_cases_all = get_all_in_progress_cases_db() or []
+    if range_start_dt or range_end_dt:
+        completed_cases = _filter_cases_by_date_range(completed_cases_all, range_start_dt, range_end_dt)
+        in_progress_cases = _filter_cases_by_date_range(in_progress_cases_all, range_start_dt, range_end_dt)
+    else:
+        completed_cases = list(completed_cases_all)
+        in_progress_cases = list(in_progress_cases_all)
+    header_info = load_report_header_info()
+
+    cutoff_days = max(0, int(include_recent_days or 0))
+    if recent_only_flag and cutoff_days > 0:
+        cutoff = run_reference - timedelta(days=cutoff_days)
+        filtered_cases = []
+        for case in completed_cases:
+            created_raw = case.get('created_at') or case.get('start_date')
+            created_date = None
+            if created_raw:
+                try:
+                    created_date = datetime.strptime(str(created_raw)[:10], '%Y-%m-%d')
+                except Exception:
+                    try:
+                        created_date = datetime.strptime(str(created_raw)[:10], '%m-%d-%Y')
+                    except Exception:
+                        created_date = None
+            if created_date and created_date >= cutoff:
+                filtered_cases.append(case)
+        cases_for_total = filtered_cases
+    else:
+        recent_only_flag = False
+        cutoff_days = 0
+        cases_for_total = list(completed_cases)
+
+    timestamp = run_reference.strftime('%Y%m%d_%H%M%S')
+    generated_files = []
+
+    if "total_summary_pdf" in report_types:
+        pdf_dir = _resolve_output_dir("total_summary_pdf")
+        _remove_matching_files(pdf_dir, ["total_case_summary_*.pdf"])
+        pdf_total_path = os.path.join(pdf_dir, f"total_case_summary_{timestamp}.pdf")
+        generate_total_case_summary_pdf(
+            cases=cases_for_total,
+            start_date=range_start_str,
+            end_date=range_end_str,
+            recent_only=recent_only_flag,
+            recent_days=cutoff_days,
+            header_info=header_info,
+            filename=pdf_total_path,
+            page_size=page_size,
+            orientation=orientation,
+        )
+        generated_files.append(pdf_total_path)
+
+    if "total_summary_xlsx" in report_types:
+        xlsx_dir = _resolve_output_dir("total_summary_xlsx")
+        _remove_matching_files(xlsx_dir, ["total_case_summary_*.xlsx"])
+        xlsx_total_path = os.path.join(xlsx_dir, f"total_case_summary_{timestamp}.xlsx")
+        generate_total_case_summary_xlsx(
+            cases=cases_for_total,
+            start_date=range_start_str,
+            end_date=range_end_str,
+            recent_only=recent_only_flag,
+            recent_days=cutoff_days,
+            filename=xlsx_total_path,
+        )
+        generated_files.append(xlsx_total_path)
+
+    if "all_cases_pdf" in report_types:
+        all_cases_dir = _resolve_output_dir("all_cases_pdf")
+        _remove_matching_files(all_cases_dir, ["all_cases_summary_*.pdf"])
+        pdf_all_cases_path = os.path.join(all_cases_dir, f"all_cases_summary_{timestamp}.pdf")
+        generate_all_cases_summary_pdf(
+            completed_cases=completed_cases,
+            in_progress_cases=in_progress_cases,
+            header_info=header_info,
+            filename=pdf_all_cases_path,
+            page_size=page_size,
+            orientation=orientation,
+        )
+        generated_files.append(pdf_all_cases_path)
+
+    if "graphs_snapshot" in report_types:
+        graphs_dir = _resolve_output_dir("graphs_snapshot")
+        _remove_matching_files(graphs_dir, ["*.png", "*.csv"])
+        graph_settings = config.get("graph_settings") or DEFAULT_GRAPH_EXPORT_SETTINGS
+        graph_scopes: list[tuple[str, list[dict]]]
+        graph_scopes = [("All Cases", completed_cases_all)]
+        range_label = DATE_RANGE_MODE_LABELS.get(range_mode, "Selected Range")
+        if range_start_dt or range_end_dt:
+            graph_scopes.append((range_label, completed_cases))
+        elif range_mode != "all":
+            graph_scopes.append((range_label, completed_cases))
+
+        for scope_label, scope_cases in graph_scopes:
+            generated_files.extend(
+                generate_graph_exports(
+                    graph_settings=graph_settings,
+                    cases=scope_cases,
+                    output_dir=graphs_dir,
+                    timestamp=timestamp,
+                    scope_label=scope_label,
+                )
+            )
+
+    if "map_html" in report_types:
+        map_dir = _resolve_output_dir("map_html")
+        map_settings = config.get("map_settings") or DEFAULT_MAP_EXPORT_SETTINGS
+        map_generated = generate_map_exports(
+            map_settings=map_settings,
+            completed_cases=completed_cases_all,
+            in_progress_cases=in_progress_cases_all,
+            output_dir=map_dir,
+            timestamp=timestamp,
+        )
+        generated_files.extend(map_generated)
+
+    logging.info("Automated export run complete. Generated files: %s", generated_files)
+    return generated_files
+
+
+def slugify_filename(value: str, default: str = "file") -> str:
+    """Convert text into a filesystem-friendly slug."""
+    if not isinstance(value, str):
+        return default
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", value).strip("_").lower()
+    return slug or default
+
+
+_FILENAME_INVALID_CHARS_RE = re.compile(r'[<>:"/\\|?*]')
+
+
+def _clean_filename_component(text: str, fallback: str) -> str:
+    candidate = str(text or "").strip()
+    candidate = _FILENAME_INVALID_CHARS_RE.sub("", candidate)
+    candidate = candidate.replace("\n", " ").replace("\r", " ")
+    candidate = re.sub(r"\s+", " ", candidate)
+    candidate = candidate.strip(" .")
+    return candidate or fallback
+
+
+def _build_graph_export_filename(
+    graph_type: str,
+    scope_label: str,
+    year_label: str,
+    timestamp: str,
+    extension: str,
+) -> str:
+    graph_part = _clean_filename_component(graph_type, "Graph")
+    scope_part = _clean_filename_component(scope_label, "All Cases")
+    year_part = _clean_filename_component(year_label, "All Years")
+    timestamp_part = _clean_filename_component(timestamp, "timestamp")
+    ext = _clean_filename_component(extension, "dat").lower().lstrip(".") or "dat"
+    filename = f"Graph - {graph_part} - {scope_part} - {year_part} - {timestamp_part}.{ext}"
+    return filename
+
+
+GRAPH_FIELD_MAP = {
+    "Offense Type": "offense_type",
+    "Device Type": "device_type",
+    "OS": "os",
+    "Agency": "agency",
+    "State of Offense": "state_of_offense",
+    "Examiner": "examiner",
+    "Investigator": "investigator",
+    "Year": "start_date",
+    "City of Offense": "city_of_offense",
+}
+
+
+def _filter_cases_by_year(cases: list[dict], year_filter: str | None) -> list[dict]:
+    if not cases:
+        return []
+    if not year_filter or year_filter in {"", "All"}:
+        return list(cases)
+    year_filter = str(year_filter)
+    filtered: list[dict] = []
+    for case in cases:
+        start_date = str(case.get("start_date") or "")
+        if start_date.startswith(year_filter):
+            filtered.append(case)
+    return filtered
+
+
+def _case_date_for_range(case: dict) -> datetime | None:
+    for key in ("start_date", "created_at"):
+        raw = case.get(key)
+        if not raw:
+            continue
+        text = str(raw)
+        for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%m/%d/%Y", "%m-%d-%Y"):
+            try:
+                return datetime.strptime(text[:len(fmt)], fmt)
+            except Exception:
+                continue
+    return None
+
+
+def _filter_cases_by_date_range(cases: list[dict], start_dt: datetime | None, end_dt: datetime | None) -> list[dict]:
+    if not start_dt and not end_dt:
+        return list(cases)
+    filtered: list[dict] = []
+    for case in cases:
+        case_dt = _case_date_for_range(case)
+        if case_dt is None:
+            continue
+        if start_dt and case_dt < start_dt:
+            continue
+        if end_dt and case_dt > end_dt:
+            continue
+        filtered.append(case)
+    return filtered
+
+
+def _resolve_automation_date_range(mode: str, reference: datetime | None = None) -> tuple[datetime | None, datetime | None]:
+    """Return start/end datetimes for the automation date range mode."""
+    reference = reference or datetime.now()
+    mode = (mode or "current_week").lower()
+
+    if mode == "current_week":
+        start_of_week = reference - timedelta(days=reference.weekday())
+        start_dt = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
+        next_week = start_dt + timedelta(days=7)
+        end_dt = next_week - timedelta(seconds=1)
+        return start_dt, min(end_dt, reference)
+
+    if mode == "current_month":
+        start_dt = reference.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        next_month = _add_one_month(start_dt)
+        end_dt = next_month - timedelta(seconds=1)
+        return start_dt, min(end_dt, reference)
+
+    if mode == "all":
+        return None, None
+
+    return None, None
+
+
+def build_graph_dataset(
+    cases: list[dict],
+    graph_type: str,
+    year_filter: str | None = "All",
+) -> dict | None:
+    """Return structured data for a given graph type suitable for plotting or export."""
+    cases = cases or []
+    graph_type = graph_type or GRAPH_TYPE_CHOICES[0]
+    filtered_cases = _filter_cases_by_year(cases, year_filter)
+
+    dataset: dict[str, object] = {
+        "graph_type": graph_type,
+        "year_filter": year_filter or "All",
+    }
+
+    if graph_type in GRAPH_VOLUME_GROUP_TYPES:
+        group_field = GRAPH_VOLUME_GROUP_TYPES[graph_type]
+        totals: dict[str, float] = defaultdict(float)
+        for case in filtered_cases:
+            group_val = (case.get(group_field) or "Unknown").strip() or "Unknown"
+            totals[group_val] += safe_float_conversion(case.get("volume_size_gb"))
+        if not totals:
+            return None
+        sorted_items = sorted(totals.items(), key=lambda item: item[1], reverse=True)
+        labels = [label for label, _ in sorted_items]
+        values_gb = [value for _, value in sorted_items]
+        use_tb = any(value > 999 for value in values_gb)
+        if use_tb:
+            plot_values = [value / 1024.0 for value in values_gb]
+            display_values = [f"{value / 1024.0:.2f} TB" for value in values_gb]
+            unit = "TB"
+        else:
+            plot_values = values_gb
+            display_values = [f"{value:.2f} GB" for value in values_gb]
+            unit = "GB"
+        dataset.update(
+            {
+                "labels": labels,
+                "plot_values": plot_values,
+                "display_values": display_values,
+                "y_label": f"Total Volume ({unit})",
+                "xlabel": graph_type,
+                "title": graph_type,
+                "value_kind": "volume",
+                "unit": unit,
+                "raw_values_gb": values_gb,
+                "csv_rows": [
+                    {
+                        "label": label,
+                        "total_gb": gb,
+                        "total_tb": gb / 1024.0,
+                    }
+                    for label, gb in zip(labels, values_gb)
+                ],
+                "csv_headers": ["label", "total_gb", "total_tb"],
+            }
+        )
+        return dataset
+
+    if graph_type == GRAPH_TOTAL_VOLUME_LABEL:
+        total_gb = sum(safe_float_conversion(case.get("volume_size_gb")) for case in filtered_cases)
+        unit = "TB" if total_gb > 999 else "GB"
+        if unit == "TB":
+            plot_value = total_gb / 1024.0
+            display_value = f"{total_gb / 1024.0:.2f} TB"
+        else:
+            plot_value = total_gb
+            display_value = f"{total_gb:.2f} GB"
+        dataset.update(
+            {
+                "labels": ["Total"],
+                "plot_values": [plot_value],
+                "display_values": [display_value],
+                "y_label": f"Total Volume ({unit})",
+                "xlabel": "",
+                "title": "Total Volume of All Cases",
+                "value_kind": "volume",
+                "unit": unit,
+                "raw_values_gb": [total_gb],
+                "csv_rows": [
+                    {
+                        "metric": "Total Volume",
+                        "total_gb": total_gb,
+                        "total_tb": total_gb / 1024.0,
+                    }
+                ],
+                "csv_headers": ["metric", "total_gb", "total_tb"],
+            }
+        )
+        return dataset if total_gb > 0 else None
+
+    field = GRAPH_FIELD_MAP.get(graph_type)
+    if not field:
+        field = GRAPH_FIELD_MAP.get("Offense Type")
+    counts: dict[str, int] = defaultdict(int)
+    if graph_type == "Year":
+        for case in filtered_cases:
+            start_date = str(case.get("start_date") or "")
+            year = start_date[:4] if start_date else "Unknown"
+            counts[year] += 1
+        xlabel = "Year"
+    else:
+        for case in filtered_cases:
+            value = (case.get(field) or "Unknown").strip() or "Unknown"
+            counts[value] += 1
+        xlabel = graph_type
+    if not counts:
+        return None
+    sorted_items = sorted(counts.items(), key=lambda item: item[1], reverse=True)
+    labels = [label for label, _ in sorted_items]
+    values = [value for _, value in sorted_items]
+    dataset.update(
+        {
+            "labels": labels,
+            "plot_values": values,
+            "display_values": [str(v) for v in values],
+            "y_label": "Count",
+            "xlabel": xlabel,
+            "title": f"{graph_type} Distribution",
+            "value_kind": "count",
+            "unit": "count",
+            "raw_counts": values,
+            "csv_rows": [
+                {
+                    "label": label,
+                    "count": value,
+                }
+                for label, value in zip(labels, values)
+            ],
+            "csv_headers": ["label", "count"],
+        }
+    )
+    return dataset
+
+
+def render_graph_dataset_to_png(dataset: dict, output_path: str) -> None:
+    """Render the given dataset to a PNG file using Matplotlib."""
+    fig, ax = plt.subplots(figsize=(10, 6))
+    labels: list[str] = list(dataset.get("labels", []))
+    values: list[float] = list(dataset.get("plot_values", []))
+    display_values: list[str] = list(dataset.get("display_values", []))
+
+    if labels and values:
+        bars = ax.bar(labels, values, color="#4a90e2", align='center')
+        ax.set_xlabel(dataset.get("xlabel", ""))
+        ax.set_ylabel(dataset.get("y_label", ""))
+        ax.set_title(dataset.get("title", ""))
+        ax.tick_params(axis='x', rotation=45)
+        fig.autofmt_xdate(rotation=45)
+        fig.subplots_adjust(bottom=0.25)
+        for bar, label in zip(bars, display_values):
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width() / 2, height, label, ha='center', va='bottom', fontsize=9)
+    else:
+        ax.text(0.5, 0.5, "No data to display", ha='center', va='center', fontsize=16)
+        ax.set_axis_off()
+
+    fig.tight_layout()
+    canvas = FigureCanvasAgg(fig)
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    canvas.print_png(output_path)
+    plt.close(fig)
+
+
+def write_graph_dataset_to_csv(dataset: dict, output_path: str) -> None:
+    """Persist graph dataset rows to a CSV file."""
+    rows: list[dict] = list(dataset.get("csv_rows", []))
+    headers: list[str] = list(dataset.get("csv_headers", []))
+    if not rows:
+        return
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=headers)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
+
+def generate_graph_exports(
+    graph_settings: dict,
+    cases: list[dict],
+    output_dir: str,
+    timestamp: str,
+    scope_label: str = "All Cases",
+) -> list[str]:
+    """Generate graph exports (PNG/CSV) based on configured graph settings."""
+    if not graph_settings:
+        graph_settings = DEFAULT_GRAPH_EXPORT_SETTINGS
+    include_png = bool(graph_settings.get("include_png", True))
+    include_csv = bool(graph_settings.get("include_csv", True))
+    selected_types = graph_settings.get("types") or DEFAULT_GRAPH_EXPORT_SETTINGS["types"]
+    year_filter = graph_settings.get("year_filter", "All")
+    scope_label = scope_label or "All Cases"
+
+    os.makedirs(output_dir, exist_ok=True)
+    generated: list[str] = []
+
+    for graph_type in selected_types:
+        dataset = build_graph_dataset(cases, graph_type, year_filter)
+        if not dataset:
+            logging.info(
+                "Graph export skipped for '%s' (%s scope - no data).",
+                graph_type,
+                scope_label,
+            )
+            continue
+        year_label = "All Years" if not year_filter or str(year_filter).strip().lower() in {"all", "all years"} else f"Year {year_filter}"
+        if include_png:
+            png_filename = _build_graph_export_filename(graph_type, scope_label, year_label, timestamp, "png")
+            png_path = os.path.join(output_dir, png_filename)
+            render_graph_dataset_to_png(dataset, png_path)
+            generated.append(png_path)
+        if include_csv:
+            csv_filename = _build_graph_export_filename(graph_type, scope_label, year_label, timestamp, "csv")
+            csv_path = os.path.join(output_dir, csv_filename)
+            write_graph_dataset_to_csv(dataset, csv_path)
+            generated.append(csv_path)
+
+    return generated
+
+
+def _build_map_popup_html(marker: dict) -> str:
+    title = f"{marker.get('city', '')}, {marker.get('state', '')}".strip(", ")
+    case_count = marker.get("case_count", 0)
+    completed = marker.get("completed_count", 0)
+    in_progress = marker.get("in_progress_count", 0)
+    offenses = marker.get("offense_types", [])
+    offenses_str = ", ".join(offenses) if offenses else "Unknown"
+    total_volume_gb = marker.get("total_volume_gb", 0.0)
+    volume_str = f"{total_volume_gb:.2f} GB" if total_volume_gb < 1024 else f"{total_volume_gb / 1024.0:.2f} TB"
+    parts = [
+        f"<strong>{html.escape(title or 'Location')}</strong>",
+        f"<div>Total cases: {case_count}</div>",
+        f"<div>Completed: {completed} &bull; In Progress: {in_progress}</div>",
+        f"<div>Total volume: {volume_str}</div>",
+        f"<div>Offense types: {html.escape(offenses_str)}</div>",
+    ]
+
+    case_details = marker.get("cases") or []
+    if case_details:
+        parts.append("<div style='margin-top:6px;'><em>Sample cases:</em></div>")
+        parts.append("<ul style='padding-left:16px; margin-top:4px; margin-bottom:0;'>")
+        for idx, case in enumerate(case_details[:10]):
+            label = case.get("case_number") or case.get("id") or "Case"
+            status = case.get("case_status", "")
+            offense = case.get("offense_type", "Unknown")
+            parts.append(
+                "<li><strong>{}</strong> ({}) - {}</li>".format(
+                    html.escape(str(label)),
+                    html.escape(str(status)),
+                    html.escape(str(offense) or "Unknown"),
+                )
+            )
+        if len(case_details) > 10:
+            parts.append("<li>&hellip;</li>")
+        parts.append("</ul>")
+
+    return "".join(parts)
+
+
+def prepare_map_marker_records(
+    completed_cases: list[dict],
+    in_progress_cases: list[dict],
+    include_completed: bool = True,
+    include_in_progress: bool = True,
+    include_case_details: bool = True,
+) -> tuple[list[dict], int]:
+    """Return marker metadata for map exports along with the count of skipped locations."""
+    grouped: dict[tuple[str, str], dict] = {}
+
+    def _add_case(case: dict, status_label: str) -> None:
+        city = (case.get("city_of_offense") or "").strip()
+        state = (case.get("state_of_offense") or "").strip()
+        if not city or not state:
+            return
+        key = (city, state)
+        if key not in grouped:
+            grouped[key] = {
+                "cases": [],
+                "completed_count": 0,
+                "in_progress_count": 0,
+                "total_volume_gb": 0.0,
+            }
+        record = grouped[key]
+        record["cases"].append((case, status_label))
+        if status_label == "Completed":
+            record["completed_count"] += 1
+        else:
+            record["in_progress_count"] += 1
+        record["total_volume_gb"] += safe_float_conversion(case.get("volume_size_gb"))
+
+    if include_completed:
+        for case in completed_cases or []:
+            _add_case(case, "Completed")
+    if include_in_progress:
+        for case in in_progress_cases or []:
+            _add_case(case, "In Progress")
+
+    markers: list[dict] = []
+    skipped = 0
+    for (city, state), info in grouped.items():
+        coords = get_cached_location_db(f"{city}|{state}")
+        if not coords:
+            skipped += 1
+            continue
+        lat, lon = coords
+        cases_with_context = []
+        if include_case_details:
+            for case, status_label in info["cases"]:
+                cases_with_context.append(
+                    {
+                        "case_number": case.get("case_number") or case.get("id"),
+                        "case_status": status_label,
+                        "offense_type": case.get("offense_type"),
+                        "device_type": case.get("device_type"),
+                        "agency": case.get("agency"),
+                        "investigator": case.get("investigator"),
+                        "examiner": case.get("examiner"),
+                        "start_date": case.get("start_date"),
+                        "end_date": case.get("end_date"),
+                        "volume_size_gb": safe_float_conversion(case.get("volume_size_gb"), 0.0),
+                    }
+                )
+
+        offenses = sorted(
+            {
+                (case.get("offense_type") or "Unknown").strip() or "Unknown"
+                for case, _ in info["cases"]
+            }
+        )
+
+        marker = {
+            "city": city,
+            "state": state,
+            "latitude": lat,
+            "longitude": lon,
+            "case_count": len(info["cases"]),
+            "completed_count": info["completed_count"],
+            "in_progress_count": info["in_progress_count"],
+            "total_volume_gb": info["total_volume_gb"],
+            "offense_types": offenses,
+        }
+        if include_case_details:
+            marker["cases"] = cases_with_context
+        marker["popup_html"] = _build_map_popup_html(marker)
+        markers.append(marker)
+
+    markers.sort(key=lambda item: item["case_count"], reverse=True)
+    return markers, skipped
+
+
+def write_map_html(markers: list[dict], output_path: str) -> None:
+    """Write a Leaflet-powered HTML map file using the provided markers."""
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    markers_json = json.dumps(markers, ensure_ascii=False).replace('</', '<\\/')
+    center = markers[0] if markers else {"latitude": 37.8, "longitude": -96.9, "case_count": 0}
+    zoom = 5 if markers else 4
+    html_content = f"""<!DOCTYPE html>
+<html lang='en'>
+<head>
+    <meta charset='utf-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <title>CyberLab Case Map</title>
+    <link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'/>
+    <style>
+        body, html {{ margin: 0; padding: 0; height: 100%; font-family: Arial, sans-serif; }}
+        #map {{ height: 100%; width: 100%; }}
+        .leaflet-popup-content {{ min-width: 220px; }}
+    </style>
+</head>
+<body>
+    <div id='map'></div>
+    <script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script>
+    <script>
+        (() => {{
+            if (typeof L === 'undefined') {{
+                const div = document.createElement('div');
+                div.style.position = 'absolute';
+                div.style.top = '50%';
+                div.style.left = '50%';
+                div.style.transform = 'translate(-50%, -50%)';
+                div.style.maxWidth = '520px';
+                div.style.background = 'rgba(255,255,255,0.95)';
+                div.style.padding = '20px';
+                div.style.borderRadius = '8px';
+                div.style.boxShadow = '0 3px 12px rgba(0,0,0,0.25)';
+                div.innerHTML = '<h2 style="margin-top:0;">Map Library Blocked</h2><p>Leaflet.js failed to load. Check your internet connection or firewall and reload this file. If you need offline maps, enable "Export marker data file" and pivot to an internal tile source.</p>';
+                document.body.appendChild(div);
+                return;
+            }}
+
+            const markers = {markers_json};
+            const map = L.map('map').setView([{center.get('latitude', 37.8)}, {center.get('longitude', -96.9)}], {zoom});
+            L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+                maxZoom: 19,
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }}).addTo(map);
+
+            if (!markers.length) {{
+                const div = document.createElement('div');
+                div.style.position = 'absolute';
+                div.style.top = '50%';
+                div.style.left = '50%';
+                div.style.transform = 'translate(-50%, -50%)';
+                div.style.background = 'rgba(255,255,255,0.9)';
+                div.style.padding = '20px';
+                div.style.borderRadius = '6px';
+                div.style.boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
+                div.innerText = 'No map markers available.';
+                document.body.appendChild(div);
+                return;
+            }}
+
+            const bounds = L.latLngBounds([]);
+            markers.forEach(marker => {{
+                const lat = Number(marker.latitude);
+                const lon = Number(marker.longitude);
+                if (Number.isFinite(lat) && Number.isFinite(lon)) {{
+                    const popupHtml = marker.popup_html || '';
+                    L.marker([lat, lon]).addTo(map).bindPopup(popupHtml);
+                    bounds.extend([lat, lon]);
+                }}
+            }});
+
+            if (bounds.isValid()) {{
+                map.fitBounds(bounds.pad(0.1));
+            }} else {{
+                map.setView([{center.get('latitude', 37.8)}, {center.get('longitude', -96.9)}], {zoom});
+            }}
+
+            setTimeout(() => map.invalidateSize(), 50);
+        }})();
+    </script>
+</body>
+</html>
+"""
+    with open(output_path, "w", encoding="utf-8") as fh:
+        fh.write(html_content)
+
+
+def write_map_data_files(markers: list[dict], output_base: str) -> list[str]:
+    generated: list[str] = []
+    if not markers:
+        return generated
+
+    json_path = f"{output_base}.json"
+    with open(json_path, "w", encoding="utf-8") as fh:
+        json.dump(markers, fh, ensure_ascii=False, indent=2)
+    generated.append(json_path)
+
+    csv_path = f"{output_base}.csv"
+    fieldnames = [
+        "city",
+        "state",
+        "latitude",
+        "longitude",
+        "case_count",
+        "completed_count",
+        "in_progress_count",
+        "total_volume_gb",
+        "offense_types",
+    ]
+    with open(csv_path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        for marker in markers:
+            row = {key: marker.get(key) for key in fieldnames}
+            row["offense_types"] = ", ".join(marker.get("offense_types", []))
+            writer.writerow(row)
+    generated.append(csv_path)
+
+    return generated
+
+
+def generate_map_exports(
+    map_settings: dict,
+    completed_cases: list[dict],
+    in_progress_cases: list[dict],
+    output_dir: str,
+    timestamp: str,
+) -> list[str]:
+    """Generate map HTML (and optional data files) for automated exports."""
+    if not map_settings:
+        map_settings = DEFAULT_MAP_EXPORT_SETTINGS
+
+    include_completed = bool(map_settings.get("include_completed", True))
+    include_in_progress = bool(map_settings.get("include_in_progress", True))
+    include_case_details = bool(map_settings.get("include_case_details", True))
+    include_data_file = bool(map_settings.get("include_data_file", True))
+
+    os.makedirs(output_dir, exist_ok=True)
+    _remove_matching_files(output_dir, ["case_map_*.html", "case_map_*.json", "case_map_*.csv"])
+    markers, skipped = prepare_map_marker_records(
+        completed_cases,
+        in_progress_cases,
+        include_completed=include_completed,
+        include_in_progress=include_in_progress,
+        include_case_details=include_case_details,
+    )
+
+    if skipped:
+        logging.info("Map export skipped %s location(s) without cached coordinates.", skipped)
+
+    html_path = os.path.join(output_dir, f"case_map_{timestamp}.html")
+    write_map_html(markers, html_path)
+
+    generated = [html_path]
+
+    if include_data_file and markers:
+        base = os.path.join(output_dir, f"case_map_{timestamp}")
+        generated.extend(write_map_data_files(markers, base))
+
+    return generated
+
 # --- Helper Functions ---
 
 def format_date_str_for_display(date_str):
@@ -1179,31 +2941,18 @@ def get_unique_field_values(field):
     return sorted(values)
 
 
-def safe_float_conversion(value):
-    """Safely convert a value to float, returning 0.0 for invalid values."""
+def safe_float_conversion(value, default: float = 0.0) -> float:
+    """Safely convert a value to float, returning *default* for invalid inputs."""
     if value is None:
-        return 0.0
+        return default
     try:
-        # Convert to string first to handle various input types
         str_value = str(value).strip()
-        if not str_value or str_value.lower() in ['', 'none', 'null', 'n/a']:
-            return 0.0
+        if not str_value or str_value.lower() in {'', 'none', 'null', 'n/a', 'na'}:
+            return default
         return float(str_value)
     except (ValueError, TypeError):
-        # Log the problematic value for debugging
-        logging.warning(f"Could not convert volume value '{value}' to float, using 0.0")
-        return 0.0
-
-
-def format_volume_for_display(volume_gb: float) -> str:
-    """Return a human-friendly string for a volume in gigabytes (auto-convert to TB)."""
-    try:
-        vol = float(volume_gb)
-    except (TypeError, ValueError):
-        vol = 0.0
-    if vol > 999:
-        return f"{vol / 1024.0:.2f} TB"
-    return f"{vol:.2f} GB"
+        logging.debug("Could not convert value '%s' to float. Using default %.2f.", value, default)
+        return default
 
 
 # --- Main Application Class ---
@@ -1273,7 +3022,6 @@ class CaseLogApp:
             'volume_size_gb': {'text': 'Volume (GB)', 'width': 100},
             'offense_type': {'text': 'Offense Type', 'width': 120},
             'device_type': {'text': 'Device Type', 'width': 100},
-            'forensic_tool': {'text': 'Forensic Tool', 'width': 120},
             'model': {'text': 'Model', 'width': 100},
             'os': {'text': 'OS', 'width': 80},
             'data_recovered': {'text': 'Data Recovered?', 'width': 120},
@@ -1426,7 +3174,7 @@ class CaseLogApp:
             self._combo_registry = {}
         # Keys whose options are user-managed
         self._editable_combo_keys = [
-            "examiner", "investigator", "agency", "offense_type", "city_of_offense", "forensic_tool"
+            "examiner", "investigator", "agency", "offense_type", "city_of_offense"
         ]
 
     def _register_editable_combo(self, key: str, combo: ttk.Combobox, var: tk.StringVar):
@@ -1488,13 +3236,9 @@ class CaseLogApp:
         except Exception:
             pass
         try:
-            merged_set = {v for v in (persisted + derived) if isinstance(v, str)}
+            merged = sorted({v for v in (persisted + derived) if isinstance(v, str)})
         except Exception:
-            merged_set = set(persisted or derived or [])
-        # Seed with defaults when available so users always see helpful starting options
-        defaults = EDITABLE_COMBO_DEFAULTS.get(key, [])
-        merged_set.update(defaults)
-        merged = sorted(merged_set)
+            merged = persisted or derived or []
         # Persist back if registry exists (first run hydration)
         try:
             set_combo_values_db(key, merged)
@@ -1583,12 +3327,9 @@ class CaseLogApp:
         try:
             geolocator = Nominatim(user_agent=APP_NAME)
             location = geolocator.geocode(f"{state}, USA")
-            if location:
-                lat = getattr(location, "latitude", None)
-                lon = getattr(location, "longitude", None)
-                if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
-                    self.map_widget.set_position(float(lat), float(lon))
-                    self.map_widget.set_zoom(6)  # Reasonable zoom for a state
+            if location and hasattr(location, 'latitude') and hasattr(location, 'longitude'):
+                self.map_widget.set_position(location.latitude, location.longitude)
+                self.map_widget.set_zoom(6)  # Reasonable zoom for a state
         except Exception as e:
             logging.warning(f"Could not focus map on state '{state}': {e}")
     def get_report_header_info(self):
@@ -1923,16 +3664,14 @@ class CaseLogApp:
         else:
             report_content += f"Total Volume: {total_gb:.2f} GB\n\n"
 
-        examiners, agencies, offense_types, forensic_tools = {}, {}, {}, {}
+        examiners, agencies, offense_types = {}, {}, {}
         for case in all_cases:
             examiner = case.get('examiner', 'Unknown')
             agency = case.get('agency', 'Unknown')
             offense = case.get('offense_type', 'Unknown')
-            tool = case.get('forensic_tool', 'Unknown') or 'Unknown'
             examiners[examiner] = examiners.get(examiner, 0) + 1
             agencies[agency] = agencies.get(agency, 0) + 1
             offense_types[offense] = offense_types.get(offense, 0) + 1
-            forensic_tools[tool] = forensic_tools.get(tool, 0) + 1
 
         report_content += "CASES BY EXAMINER\n"
         report_content += "-" * 30 + "\n"
@@ -1949,21 +3688,12 @@ class CaseLogApp:
         for offense, count in sorted(offense_types.items()):
             report_content += f"{offense}: {count}\n"
 
-        report_content += "\nCASES BY FORENSIC TOOL\n"
-        report_content += "-" * 30 + "\n"
-        for tool, count in sorted(forensic_tools.items()):
-            report_content += f"{tool}: {count}\n"
-
         report_content += "\nCOMPLETED CASE DETAILS\n"
         report_content += "-" * 30 + "\n"
         for i, case in enumerate(cases, 1):
             report_content += f"{i}. Case #{case.get('case_number', 'N/A')} - "
             report_content += f"{case.get('examiner', 'N/A')} - "
-            report_content += f"{case.get('start_date', 'N/A')}"
-            tool = case.get('forensic_tool')
-            if tool:
-                report_content += f" - Tool: {tool}"
-            report_content += "\n"
+            report_content += f"{case.get('start_date', 'N/A')}\n"
 
         if in_progress_cases:
             report_content += "\nIN-PROGRESS CASE DETAILS\n"
@@ -1971,11 +3701,7 @@ class CaseLogApp:
             for i, case in enumerate(in_progress_cases, 1):
                 report_content += f"{i}. Case #{case.get('case_number', 'N/A')} - "
                 report_content += f"{case.get('examiner', 'N/A')} - "
-                report_content += f"{case.get('created_at', 'N/A')}"
-                tool = case.get('forensic_tool')
-                if tool:
-                    report_content += f" - Tool: {tool}"
-                report_content += "\n"
+                report_content += f"{case.get('created_at', 'N/A')}\n"
 
         return report_content
 
@@ -2063,7 +3789,7 @@ class CaseLogApp:
         size_map = {"Letter": letter, "Legal": legal, "A4": A4}
         base_size = size_map.get(page_size, letter)
         pagesize = portrait(base_size) if orientation != "Landscape" else landscape(base_size)
-        headers = ["#", "Case #", "Start", "Examiner", "Agency", "Offense", "Device", "Forensic Tool"]
+        headers = ["#", "Case #", "Start", "Examiner", "Agency", "Offense", "Device"]
 
         doc = SimpleDocTemplate(filename, pagesize=pagesize, rightMargin=20, leftMargin=20, topMargin=24, bottomMargin=24)
         page_width = pagesize[0] - doc.leftMargin - doc.rightMargin
@@ -2121,7 +3847,7 @@ class CaseLogApp:
                 d[v] = d.get(v, 0) + 1
             return sorted(d.items(), key=lambda kv: (-kv[1], str(kv[0]).lower()))
 
-        for key, label in (("examiner", "Cases by Examiner"), ("agency", "Cases by Agency"), ("offense_type", "Cases by Offense Type"), ("forensic_tool", "Cases by Forensic Tool")):
+        for key, label in (("examiner", "Cases by Examiner"), ("agency", "Cases by Agency"), ("offense_type", "Cases by Offense Type")):
             pairs = group_counts(all_cases, key)
             if not pairs:
                 continue
@@ -2151,7 +3877,6 @@ class CaseLogApp:
                 c.get('agency', ''),
                 c.get('offense_type', ''),
                 c.get('device_type', ''),
-                c.get('forensic_tool', ''),
             ])
 
         min_w = 0.4 * inch
@@ -2184,7 +3909,7 @@ class CaseLogApp:
         # In-Progress details (no forced page break)
         if in_progress_cases:
             elements.append(Paragraph("<b>In-Progress Case Details</b>", styles["Heading2"]))
-            ip_headers = ["#", "Case #", "Created", "Examiner", "Agency", "Offense", "Device", "Forensic Tool", "Priority", "Workflow", "Target Due"]
+            ip_headers = ["#", "Case #", "Created", "Examiner", "Agency", "Offense", "Device", "Priority", "Workflow", "Target Due"]
             ip_rows = [ip_headers]
             for i, c in enumerate(in_progress_cases, 1):
                 ip_rows.append([
@@ -2195,7 +3920,6 @@ class CaseLogApp:
                     c.get('agency', ''),
                     c.get('offense_type', ''),
                     c.get('device_type', ''),
-                    c.get('forensic_tool', ''),
                     c.get('priority', ''),
                     c.get('workflow_status', ''),
                     format_date_str_for_display(c.get('target_due_date', '')),
@@ -2415,579 +4139,84 @@ class CaseLogApp:
 
     def export_total_case_summary_pdf(self, cases, start_date, end_date, recent_only, recent_days, page_size="Letter", orientation="Auto"):
         from tkinter import filedialog
-        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
-        from reportlab.lib.styles import getSampleStyleSheet
-        from reportlab.lib.pagesizes import letter, legal, A4, landscape, portrait
-        from reportlab.lib import colors
-        from reportlab.lib.units import inch
-        filename = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF files", "*.pdf")], title="Save Total Summary PDF")
+
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf")],
+            title="Save Total Summary PDF",
+        )
         if not filename:
             return
-        # Resolve page size and orientation
-        size_map = {"Letter": letter, "Legal": legal, "A4": A4}
-        base_size = size_map.get(page_size, letter)
-        # Auto: landscape when recent table shown (5 cols), otherwise portrait (2-col breakdowns fit fine)
-        use_landscape = True if orientation == "Landscape" else False
-        if orientation == "Auto":
-            use_landscape = True if recent_only else False
-        pagesize = landscape(base_size) if use_landscape else portrait(base_size)
 
-        doc = SimpleDocTemplate(filename, pagesize=pagesize,
-                                 leftMargin=20, rightMargin=20, topMargin=24, bottomMargin=24)
-        elements = []
-        styles = getSampleStyleSheet()
-        page_width = pagesize[0] - doc.leftMargin - doc.rightMargin
-        # Header info (top left)
-        header_info = self.get_report_header_info()
-        header_lines = [
-            f"Name: {header_info.get('Name','')}",
-            f"Agency: {header_info.get('Agency','')}",
-            f"Division: {header_info.get('Division','')}",
-            f"Date: {header_info.get('Date','')}"
-        ]
-        header_table = Table([[Paragraph(line, styles["Normal"])] for line in header_lines], hAlign='LEFT')
-        elements.append(header_table)
-        elements.append(Spacer(1, 12))
-        # Logo and title (top right)
+        header = self.get_report_header_info()
         try:
-            if os.path.exists(LOGO_FILENAME):
-                from PIL import Image as PILImage
-                pil_img = PILImage.open(LOGO_FILENAME)
-                orig_w, orig_h = pil_img.size
-                max_dim = 1.1 * inch
-                if orig_w > orig_h:
-                    logo_width = max_dim
-                    logo_height = max_dim * (orig_h / orig_w)
-                else:
-                    logo_height = max_dim
-                    logo_width = max_dim * (orig_w / orig_h)
-                img = RLImage(LOGO_FILENAME, width=logo_width, height=logo_height)
-                title = "Total Case Summary"
-                if start_date or end_date:
-                    title += f" ({start_date or '...'} to {end_date or '...'})"
-                if recent_only:
-                    title += f" (Recent {recent_days} days)"
-                # Reduce title font size and allow word wrap
-                from reportlab.lib.styles import ParagraphStyle
-                small_title_style = ParagraphStyle('SmallTitle', parent=styles["Title"], fontSize=14, leading=16, alignment=1, wordWrap='CJK')
-                title_para = Paragraph(f"<b>{title}</b>", small_title_style)
-                logo_table = Table(
-                    [[title_para, img]],
-                    colWidths=[None, logo_width],
-                )
-                logo_table.setStyle(TableStyle([
-                    ("ALIGN", (0,0), (0,0), "LEFT"),
-                    ("ALIGN", (1,0), (1,0), "RIGHT"),
-                    ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
-                    ("LEFTPADDING", (1,0), (1,0), 6),
-                    ("RIGHTPADDING", (1,0), (1,0), 0),
-                    ("TOPPADDING", (0,0), (-1,-1), 2),
-                    ("BOTTOMPADDING", (0,0), (-1,-1), 2),
-                ]))
-                elements.append(logo_table)
-                elements.append(Spacer(1, 12))
-            else:
-                title = "Total Case Summary"
-                if start_date or end_date:
-                    title += f" ({start_date or '...'} to {end_date or '...'})"
-                if recent_only:
-                    title += f" (Recent {recent_days} days)"
-                from reportlab.lib.styles import ParagraphStyle
-                small_title_style = ParagraphStyle('SmallTitle', parent=styles["Title"], fontSize=14, leading=16, alignment=1, wordWrap='CJK')
-                elements.append(Paragraph(f"<b>{title}</b>", small_title_style))
-                elements.append(Spacer(1, 12))
-        except Exception:
-            title = "Total Case Summary"
-            if start_date or end_date:
-                title += f" ({start_date or '...'} to {end_date or '...'})"
-            if recent_only:
-                title += f" (Recent {recent_days} days)"
-            elements.append(Paragraph(f"<b>{title}</b>", styles["Title"]))
-            elements.append(Spacer(1, 12))
-        # Totals
-        total_cases = len(cases)
-        total_gb = sum(safe_float_conversion(c.get('volume_size_gb')) for c in cases)
-        total_tb = total_gb / 1024 if total_gb > 999 else None
-        elements.append(Paragraph(f"<b>Total Devices:</b> {total_cases}", styles["Normal"]))
-        if total_tb:
-            elements.append(Paragraph(f"<b>Total Volume:</b> {total_tb:.2f} TB", styles["Normal"]))
-        else:
-            elements.append(Paragraph(f"<b>Total Volume:</b> {total_gb:.2f} GB", styles["Normal"]))
-
-        # Benchmarking: average turnaround times per agency/tool and aging alerts
-        from datetime import datetime as dt
-
-        def _parse_iso_date(value):
-            if not value:
-                return None
-            text = str(value).strip()
-            if not text:
-                return None
-            candidates = [
-                (text[:10], '%Y-%m-%d'),
-                (text[:19], '%Y-%m-%d %H:%M:%S'),
-                (text[:10], '%m-%d-%Y'),
-            ]
-            for sample, fmt in candidates:
-                try:
-                    return dt.strptime(sample, fmt).date()
-                except ValueError:
-                    continue
-            return None
-
-        def _accumulate_turnaround(dataset, field):
-            stats = {}
-            for case in dataset:
-                start = _parse_iso_date(case.get('start_date'))
-                end = _parse_iso_date(case.get('end_date'))
-                if not start or not end or end < start:
-                    continue
-                elapsed = (end - start).days
-                key = (case.get(field) or 'Unknown').strip() or 'Unknown'
-                bucket = stats.setdefault(key, {'total': 0, 'count': 0})
-                bucket['total'] += elapsed
-                bucket['count'] += 1
-            return stats
-
-        turnaround_sections = [
-            ("Average Turnaround by Agency", _accumulate_turnaround(cases, 'agency')),
-            ("Average Turnaround by Forensic Tool", _accumulate_turnaround(cases, 'forensic_tool')),
-        ]
-
-        benchmarks_added = False
-        for heading, stats in turnaround_sections:
-            if not stats:
-                continue
-            if not benchmarks_added:
-                elements.append(Spacer(1, 8))
-                elements.append(Paragraph("<b>Benchmarking</b>", styles["Heading2"]))
-                benchmarks_added = True
-            rows = [["Value", "Avg Days", "Cases"]]
-            sorted_items = sorted(
-                stats.items(),
-                key=lambda item: ((item[1]['total'] / item[1]['count']) if item[1]['count'] else float('inf'), item[0].lower())
+            generate_total_case_summary_pdf(
+                cases=cases,
+                start_date=start_date,
+                end_date=end_date,
+                recent_only=recent_only,
+                recent_days=recent_days,
+                header_info=header,
+                filename=filename,
+                page_size=page_size,
+                orientation=orientation,
             )
-            for key, data in sorted_items:
-                avg_days = data['total'] / data['count'] if data['count'] else 0
-                rows.append([key, f"{avg_days:.1f}", str(data['count'])])
-            table = Table(rows, colWidths=[max(2.0 * inch, page_width * 0.45), 1.0 * inch, 0.9 * inch])
-            table.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
-                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                ("FONTSIZE", (0, 0), (-1, -1), 9),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ]))
-            elements.append(Paragraph(f"<b>{heading}</b>", styles["Heading3"]))
-            elements.append(table)
-            elements.append(Spacer(1, 6))
-
-        # Case aging alerts (in-progress cases approaching or past due date)
-        aging_threshold_days = 7
-        aging_entries = []
-        today = dt.now().date()
-        try:
-            active_cases = get_all_in_progress_cases_db() or []
-        except Exception:
-            active_cases = []
-        for case in active_cases:
-            due = _parse_iso_date(case.get('target_due_date'))
-            if not due:
-                continue
-            delta = (due - today).days
-            if delta < 0:
-                status = "Overdue"
-                days_display = str(abs(delta))
-            elif delta == 0:
-                status = "Due Today"
-                days_display = "0"
-            elif delta <= aging_threshold_days:
-                status = "Due Soon"
-                days_display = str(delta)
-            else:
-                continue
-            aging_entries.append({
-                'case': case.get('case_number', ''),
-                'examiner': case.get('examiner', ''),
-                'agency': case.get('agency', ''),
-                'due': format_date_str_for_display(case.get('target_due_date', '')),
-                'status': status,
-                'days': days_display,
-                'priority': case.get('priority', ''),
-                'tool': case.get('forensic_tool', ''),
-                'sort': delta,
-            })
-
-        if aging_entries:
-            status_order = {"Overdue": 0, "Due Today": 1, "Due Soon": 2}
-            aging_entries.sort(key=lambda entry: (status_order.get(entry['status'], 99), entry['sort']))
-            table_rows = [["Case #", "Examiner", "Agency", "Due Date", "Status", "Days", "Priority", "Forensic Tool"]]
-            table_rows.extend([
-                [entry['case'], entry['examiner'], entry['agency'], entry['due'], entry['status'], entry['days'], entry['priority'], entry['tool']]
-                for entry in aging_entries
-            ])
-            elements.append(Spacer(1, 8))
-            elements.append(Paragraph("<b>Case Aging Alerts (Next 7 Days / Overdue)</b>", styles["Heading2"]))
-            col_widths = [0.9 * inch, 1.2 * inch, 1.2 * inch, 1.0 * inch, 1.0 * inch, 0.8 * inch, 0.9 * inch, 1.3 * inch]
-            aging_table = Table(table_rows, colWidths=col_widths, repeatRows=1)
-            aging_table.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("ALIGN", (5, 1), (5, -1), "CENTER"),
-                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                ("FONTSIZE", (0, 0), (-1, -1), 8.5),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ]))
-            elements.append(aging_table)
-            elements.append(Spacer(1, 10))
-
-        # Breakdown by fields (dynamic widths)
-        def breakdown(field):
-            d = {}
-            for c in cases:
-                v = (c.get(field) or '').strip()
-                if v:
-                    d[v] = d.get(v, 0) + 1
-            return sorted(d.items(), key=lambda x: x[1], reverse=True)
-        for field, label in [
-            ("examiner", "Examiner"),
-            ("agency", "Agency"),
-            ("offense_type", "Offense Type"),
-            ("device_type", "Device Type"),
-            ("forensic_tool", "Forensic Tool"),
-        ]:
-            items = breakdown(field)
-            if items:
-                elements.append(Spacer(1, 8))
-                elements.append(Paragraph(f"<b>{label} Breakdown:</b>", styles["Normal"]))
-                # Allocate a fixed count column width and give the rest to the value column
-                count_col_w = 1.2 * inch
-                value_col_w = max(1.5 * inch, page_width - count_col_w)
-                t = Table([[k, v] for k, v in items], colWidths=[value_col_w, count_col_w])
-                t.setStyle(TableStyle([
-                    ("BACKGROUND", (0,0), (-1,0), colors.whitesmoke),
-                    ("ALIGN", (0,0), (-1,-1), "LEFT"),
-                    ("FONTNAME", (0,0), (-1,-1), "Helvetica"),
-                    ("FONTSIZE", (0,0), (-1,-1), 9),
-                    ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
-                    ("ALIGN", (1,0), (1,-1), "RIGHT"),
-                ]))
-                elements.append(t)
-        # List of recent cases (dynamic widths + repeat header)
-        if recent_only:
-            elements.append(Spacer(1, 12))
-            elements.append(Paragraph(f"<b>Recent Cases (last {recent_days} days):</b>", styles["Normal"]))
-            headers = ["Case #", "Created", "Examiner", "Offense", "Forensic Tool", "Vol (GB)"]
-            rows = []
-            for c in cases:
-                rows.append([
-                    c.get('case_number', ''),
-                    format_date_str_for_display(c.get('created_at', '')),
-                    c.get('examiner', ''),
-                    c.get('offense_type', ''),
-                    c.get('forensic_tool', ''),
-                    c.get('volume_size_gb', ''),
-                ])
-
-            # Compute dynamic widths based on content lengths
-            min_w = 0.6 * inch
-            max_w = (2.6 if use_landscape else 2.0) * inch
-            col_weights = []
-            for ci in range(len(headers)):
-                max_len = len(str(headers[ci]))
-                for r in rows:
-                    val = '' if ci >= len(r) or r[ci] is None else str(r[ci])
-                    if len(val) > max_len:
-                        max_len = len(val)
-                # Heuristic: scale by character length
-                col_weights.append(max(0.6, min(3.0, max_len / 10)))
-            total_weight = sum(col_weights) or 1.0
-            raw_widths = [(w / total_weight) * page_width for w in col_weights]
-            col_widths = [max(min_w, min(max_w, w)) for w in raw_widths]
-            # If we still have space, give it to the widest column
-            total_w = sum(col_widths)
-            if total_w < page_width:
-                gap = page_width - total_w
-                widest_idx = max(range(len(col_widths)), key=lambda i: col_widths[i])
-                col_widths[widest_idx] += gap
-
-            # Use smaller font and word wrap for headers
-            from reportlab.lib.styles import ParagraphStyle
-            header_style = ParagraphStyle('HeaderSmall', fontName='Helvetica-Bold', fontSize=8, leading=9, alignment=1, wordWrap='CJK')
-            wrapped_headers = [Paragraph(h, header_style) for h in headers]
-            t = Table([wrapped_headers] + rows, colWidths=col_widths, repeatRows=1, splitByRow=True)
-            t.setStyle(TableStyle([
-                ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
-                ("ALIGN", (0,0), (-1,-1), "LEFT"),
-                ("FONTNAME", (0,0), (-1,-1), "Helvetica"),
-                ("FONTSIZE", (0,0), (-1,-1), 8),
-                ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
-                ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
-            ]))
-            elements.append(t)
-        doc.build(elements)
-        self._show_report_saved_dialog(filename)
+            self._show_report_saved_dialog(filename)
+        except Exception as exc:
+            logging.error(f"Failed to build total case summary PDF: {exc}")
+            Messagebox.show_error("Total Summary", f"Failed to generate PDF: {exc}")
 
     def export_total_case_summary_xlsx(self, cases, start_date, end_date, recent_only, recent_days):
         from tkinter import filedialog
-        import pandas as pd
-        filename = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel files", "*.xlsx")], title="Save Total Summary Excel")
+
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx")],
+            title="Save Total Summary Excel",
+        )
         if not filename:
             return
-        # Build summary data
-        total_cases = len(cases)
-        total_gb = sum(safe_float_conversion(c.get('volume_size_gb')) for c in cases)
-        total_tb = total_gb / 1024 if total_gb > 999 else None
-        summary = {
-            "Total Devices": [total_cases],
-            "Total Volume (GB)": [total_gb],
-            "Total Volume (TB)": [total_tb if total_tb else '']
-        }
-        df_summary = pd.DataFrame(summary)
-        # Breakdown sheets
-        def breakdown(field):
-            d = {}
-            for c in cases:
-                v = (c.get(field) or '').strip()
-                if v:
-                    d[v] = d.get(v, 0) + 1
-            return sorted(d.items(), key=lambda x: x[1], reverse=True)
-        with pd.ExcelWriter(filename) as writer:
-            df_summary.to_excel(writer, sheet_name="Summary", index=False)
-            for field, label in [
-                ("examiner", "Examiner"),
-                ("agency", "Agency"),
-                ("offense_type", "Offense Type"),
-                ("device_type", "Device Type"),
-                ("forensic_tool", "Forensic Tool"),
-            ]:
-                items = breakdown(field)
-                if items:
-                    df = pd.DataFrame(items, columns=[label, "Count"])
-                    df.to_excel(writer, sheet_name=label, index=False)
-            # Recent cases sheet
-            if recent_only:
-                rows = []
-                for c in cases:
-                    rows.append({
-                        "Case #": c.get('case_number', ''),
-                        "Created": format_date_str_for_display(c.get('created_at', '')),
-                        "Examiner": c.get('examiner', ''),
-                        "Offense": c.get('offense_type', ''),
-                        "Forensic Tool": c.get('forensic_tool', ''),
-                        "Vol (GB)": c.get('volume_size_gb', '')
-                    })
-                df_recent = pd.DataFrame(rows)
-                df_recent.to_excel(writer, sheet_name=f"Recent_{recent_days}d", index=False)
-        self._show_report_saved_dialog(filename)
+
+        try:
+            generate_total_case_summary_xlsx(
+                cases=cases,
+                start_date=start_date,
+                end_date=end_date,
+                recent_only=recent_only,
+                recent_days=recent_days,
+                filename=filename,
+            )
+            self._show_report_saved_dialog(filename)
+        except Exception as exc:
+            logging.error(f"Failed to build total case summary XLSX: {exc}")
+            Messagebox.show_error("Total Summary", f"Failed to generate Excel: {exc}")
 
     def export_all_cases_summary_pdf(self, completed_cases, in_progress_cases=None, page_size="Letter", orientation="Auto"):
         from tkinter import filedialog
-        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.pagesizes import letter, legal, A4, landscape, portrait
-        from reportlab.lib import colors
-        from reportlab.lib.units import inch
-        import os
 
         in_progress_cases = in_progress_cases or []
-        filename = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF files", "*.pdf")], title="Save All Cases Summary PDF")
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf")],
+            title="Save All Cases Summary PDF",
+        )
         if not filename:
             return
 
-        size_map = {"Letter": letter, "Legal": legal, "A4": A4}
-        base_size = size_map.get(page_size, letter)
-        # Use landscape if many columns (when including in-progress details), otherwise portrait
-        use_landscape = True if orientation == "Landscape" else False
-        if orientation == "Auto":
-            use_landscape = True if in_progress_cases else False
-        pagesize = landscape(base_size) if use_landscape else portrait(base_size)
-
-        doc = SimpleDocTemplate(filename, pagesize=pagesize, leftMargin=20, rightMargin=20, topMargin=24, bottomMargin=24)
-        styles = getSampleStyleSheet()
-        page_width = pagesize[0] - doc.leftMargin - doc.rightMargin
-        elements = []
-
-        # Header
-        header_info = self.get_report_header_info()
-        header_lines = [
-            f"Name: {header_info.get('Name','')}",
-            f"Agency: {header_info.get('Agency','')}",
-            f"Division: {header_info.get('Division','')}",
-            f"Date: {header_info.get('Date','')}"
-        ]
-        header_table = Table([[Paragraph(line, styles["Normal"])] for line in header_lines])
-        elements.append(header_table)
-        elements.append(Spacer(1, 10))
-
-        # Title with optional logo
+        header = self.get_report_header_info()
         try:
-            title = "All Cases Summary"
-            title_para = Paragraph(f"<b>{title}</b>", styles["Title"]) 
-            if os.path.exists(LOGO_FILENAME):
-                logo_width = 1.1 * inch
-                img = RLImage(LOGO_FILENAME, width=logo_width, height=logo_width)
-                title_table = Table([[title_para, img]], colWidths=[None, logo_width])
-                title_table.setStyle(TableStyle([
-                    ("ALIGN", (0,0), (0,0), "LEFT"),
-                    ("ALIGN", (1,0), (1,0), "RIGHT"),
-                    ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
-                ]))
-                elements.append(title_table)
-            else:
-                elements.append(title_para)
-        except Exception:
-            elements.append(Paragraph("<b>All Cases Summary</b>", styles["Title"]))
-        elements.append(Spacer(1, 12))
-
-        # Totals across both datasets
-        all_cases = list(completed_cases) + list(in_progress_cases)
-        total_cases = len(all_cases)
-        total_gb = sum(safe_float_conversion(c.get('volume_size_gb')) for c in all_cases)
-        total_tb = total_gb / 1024 if total_gb > 999 else None
-        elements.append(Paragraph(f"<b>Total Devices:</b> {total_cases}", styles["Normal"]))
-        vol_text = f"{total_tb:.2f} TB" if total_tb else f"{total_gb:.2f} GB"
-        elements.append(Paragraph(f"<b>Total Volume:</b> {vol_text}", styles["Normal"]))
-        elements.append(Spacer(1, 8))
-
-        # Breakdown tables
-        def breakdown(items, field):
-            d = {}
-            for c in items:
-                v = (c.get(field) or '').strip() or 'Unknown'
-                d[v] = d.get(v, 0) + 1
-            return sorted(d.items(), key=lambda kv: (-kv[1], kv[0].lower()))
-
-        for field, label in [
-            ("examiner", "Examiner"),
-            ("agency", "Agency"),
-            ("offense_type", "Offense Type"),
-            ("device_type", "Device Type"),
-            ("forensic_tool", "Forensic Tool"),
-        ]:
-            pairs = breakdown(all_cases, field)
-            if not pairs:
-                continue
-            count_col_w = 1.2 * inch
-            value_col_w = max(1.5 * inch, page_width - count_col_w)
-            t = Table([["Value", "Count"]] + [[k, v] for k, v in pairs], colWidths=[value_col_w, count_col_w])
-            t.setStyle(TableStyle([
-                ("BACKGROUND", (0,0), (-1,0), colors.whitesmoke),
-                ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
-                ("ALIGN", (1,1), (1,-1), "RIGHT"),
-                ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
-                ("FONTSIZE", (0,0), (-1,-1), 9),
-            ]))
-            elements.append(Paragraph(f"<b>{label} Breakdown</b>", styles["Heading3"]))
-            elements.append(t)
-            elements.append(Spacer(1, 8))
-
-        # Completed details
-        headers = ["#", "Case #", "Created", "Examiner", "Agency", "Offense", "Device", "Forensic Tool"]
-        rows = [headers]
-        for i, c in enumerate(completed_cases, 1):
-            rows.append([
-                str(i),
-                c.get('case_number', ''),
-                format_date_str_for_display(c.get('start_date') or c.get('created_at', '')),
-                c.get('examiner', ''),
-                c.get('agency', ''),
-                c.get('offense_type', ''),
-                c.get('device_type', ''),
-                c.get('forensic_tool', ''),
-            ])
-        elements.append(Paragraph("<b>Completed Case Details</b>", styles["Heading2"]))
-        # width calc
-        min_w = 0.4 * inch
-        max_w = (2.5 if use_landscape else 2.0) * inch
-        col_weights = []
-        for ci in range(len(headers)):
-            max_len = len(str(rows[0][ci]))
-            for r in rows[1:]:
-                val = '' if ci >= len(r) or r[ci] is None else str(r[ci])
-                if len(val) > max_len:
-                    max_len = len(val)
-            col_weights.append(max(0.6, min(3.0, max_len / 10)))
-        total_weight = sum(col_weights) or 1.0
-        raw_widths = [(w / total_weight) * page_width for w in col_weights]
-        col_widths = [max(min_w, min(max_w, w)) for w in raw_widths]
-        total_w = sum(col_widths)
-        if total_w < page_width:
-            gap = page_width - total_w
-            widest_idx = max(range(len(col_widths)), key=lambda i: col_widths[i])
-            col_widths[widest_idx] += gap
-        t_completed = Table(rows, colWidths=col_widths, repeatRows=1, splitByRow=True)
-        t_completed.setStyle(TableStyle([
-            ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
-            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
-            ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
-            ("FONTSIZE", (0,0), (-1,-1), 8),
-            ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
-        ]))
-        elements.append(t_completed)
-
-        # In-progress details
-        if in_progress_cases:
-            ip_headers = [
-                "#",
-                "Case #",
-                "Created",
-                "Examiner",
-                "Agency",
-                "Offense",
-                "Device",
-                "Forensic Tool",
-                "Priority",
-                "Workflow",
-                "Target Due",
-            ]
-            ip_rows = [ip_headers]
-            for i, c in enumerate(in_progress_cases, 1):
-                ip_rows.append([
-                    str(i),
-                    c.get('case_number', ''),
-                    format_date_str_for_display(c.get('created_at', '')),
-                    c.get('examiner', ''),
-                    c.get('agency', ''),
-                    c.get('offense_type', ''),
-                    c.get('device_type', ''),
-                    c.get('forensic_tool', ''),
-                    c.get('priority', ''),
-                    c.get('workflow_status', ''),
-                    format_date_str_for_display(c.get('target_due_date', '')),
-                ])
-            elements.append(Paragraph("<b>In-Progress Case Details</b>", styles["Heading2"]))
-            min_w = 0.4 * inch
-            max_w = 2.2 * inch
-            col_weights = []
-            for ci in range(len(ip_headers)):
-                max_len = len(str(ip_rows[0][ci]))
-                for r in ip_rows[1:]:
-                    val = '' if ci >= len(r) or r[ci] is None else str(r[ci])
-                    if len(val) > max_len:
-                        max_len = len(val)
-                col_weights.append(max(0.6, min(3.0, max_len / 10)))
-            total_weight = sum(col_weights) or 1.0
-            raw_widths = [(w / total_weight) * page_width for w in col_weights]
-            ip_col_widths = [max(min_w, min(max_w, w)) for w in raw_widths]
-            total_w = sum(ip_col_widths)
-            if total_w < page_width:
-                gap = page_width - total_w
-                widest_idx = max(range(len(ip_col_widths)), key=lambda i: ip_col_widths[i])
-                ip_col_widths[widest_idx] += gap
-            t_ip = Table(ip_rows, colWidths=ip_col_widths, repeatRows=1, splitByRow=True)
-            t_ip.setStyle(TableStyle([
-                ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
-                ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
-                ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
-                ("FONTSIZE", (0,0), (-1,-1), 8),
-                ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
-            ]))
-            elements.append(t_ip)
-
-        doc.build(elements)
-        self._show_report_saved_dialog(filename)
+            generate_all_cases_summary_pdf(
+                completed_cases=completed_cases,
+                in_progress_cases=in_progress_cases,
+                header_info=header,
+                filename=filename,
+                page_size=page_size,
+                orientation=orientation,
+            )
+            self._show_report_saved_dialog(filename)
+        except Exception as exc:
+            logging.error(f"Failed to build all cases summary PDF: {exc}")
+            Messagebox.show_error("All Cases Summary", f"Failed to generate PDF: {exc}")
     def show_case_summary_report(self):
         """Generate a one-page PDF summary for the selected case."""
         from tkinter import filedialog
@@ -3501,8 +4730,7 @@ class CaseLogApp:
                 self.map_status_label.config(text="Map status: Map widget not available")
             return
         if hasattr(self.map_widget, 'delete_all_markers'):
-            self.map_widget.delete_all_markers()  # type: ignore[attr-defined]
-        self._clear_heatmap()
+            self.map_widget.delete_all_markers()
         cases = get_all_cases_db()
         # Group cases by (city, state)
         grouped = {}
@@ -3518,8 +4746,6 @@ class CaseLogApp:
         logging.info(f"[MapMarkers] Found {len(grouped)} unique city/state locations.")
         self.map_markers = {}
         self._grouped_cases_by_location = grouped
-        self._location_metrics = {}
-        self._heatmap_points = []
         # Prepare geocoding queue for uncached locations
         self.geocoding_queue = queue.Queue()
         self._pending_marker_locations = []
@@ -3548,39 +4774,26 @@ class CaseLogApp:
             self.processing_queue = False
             if self.map_status_label:
                 self.map_status_label.config(text=f"Map status: {len(self.map_markers)} locations loaded (all cached)")
-        self._refresh_heatmap_if_needed()
+    # Heatmap removed: no overlay rendering
 
     def _place_map_marker(self, city, state, coords):
         """Helper to place a marker on the map for a city/state with given coords."""
         try:
             lat, lon = coords
             city_cases = self._grouped_cases_by_location.get((city, state), [])
-            offense_counts = {}
-            total_volume = 0.0
-            for case in city_cases:
-                offense = (case.get('offense_type') or '').strip()
-                if offense:
-                    offense_counts[offense] = offense_counts.get(offense, 0) + 1
-                total_volume += safe_float_conversion(case.get('volume_size_gb'))
-
-            offenses_sorted = sorted(offense_counts.keys())
-            offense_str = ', '.join(offenses_sorted) if offenses_sorted else 'No offenses recorded'
+            offenses = sorted(set((c.get('offense_type') or '').strip() for c in city_cases if c.get('offense_type')))
+            offense_str = ', '.join(offenses) if offenses else 'No offenses recorded'
+            info_text = f"{city}, {state}\nOffense Types: {offense_str}"
             marker_icon = getattr(self, 'marker_icon_tk_map', None)
-            marker = self.map_widget.set_marker(  # type: ignore[attr-defined]
+            marker = self.map_widget.set_marker(
                 lat, lon,
                 text="",
                 icon=marker_icon if marker_icon else DEFAULT_MARKER_ICON,
+                # Pass location tuple so click handler can compute counts live
                 command=lambda marker, loc=(city, state): self.on_marker_click(loc)
             )
             self.map_markers[(city, state)] = marker
-            self._location_metrics[(city, state)] = {
-                "total_cases": len(city_cases),
-                "offense_counts": offense_counts,
-                "total_volume_gb": total_volume,
-            }
-            repeats = max(1, len(city_cases))
-            self._heatmap_points.extend([(lat, lon)] * repeats)
-            logging.info(f"[MapMarkers] Marker set for {city}, {state} at ({lat}, {lon}) with {len(city_cases)} case(s)")
+            logging.info(f"[MapMarkers] Marker set for {city}, {state} at ({lat}, {lon})")
         except Exception as e:
             logging.error(f"[MapMarkers] Failed to set marker for {city}, {state}: {e}")
 
@@ -3599,16 +4812,11 @@ class CaseLogApp:
                 break
             try:
                 location = geolocator.geocode(f"{city}, {state}, USA")
-                if location:
-                    lat = getattr(location, "latitude", None)
-                    lon = getattr(location, "longitude", None)
-                    if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
-                        coords = (float(lat), float(lon))
-                        add_cached_location_db(f"{city}|{state}", coords[0], coords[1])
-                        self._geocoded_results.append((city, state, coords))
-                        logging.info(f"[MapMarkers] Geocoded {city}, {state}: {coords}")
-                    else:
-                        logging.warning(f"[MapMarkers] Geocode missing coords for {city}, {state}")
+                if location and hasattr(location, 'latitude') and hasattr(location, 'longitude'):
+                    coords = (location.latitude, location.longitude)
+                    add_cached_location_db(f"{city}|{state}", location.latitude, location.longitude)
+                    self._geocoded_results.append((city, state, coords))
+                    logging.info(f"[MapMarkers] Geocoded {city}, {state}: {coords}")
                 else:
                     logging.warning(f"[MapMarkers] Geocode failed for {city}, {state}")
             except Exception as e:
@@ -3623,7 +4831,6 @@ class CaseLogApp:
             self._geocoded_results.clear()
             if self.map_status_label:
                 self.map_status_label.config(text=f"Map status: {len(self.map_markers)} locations loaded (with geocoding)")
-            self._refresh_heatmap_if_needed()
         # Continue polling if thread is alive and queue not empty
         if hasattr(self, 'geocoding_thread') and self.geocoding_thread and self.geocoding_thread.is_alive():
             self._geocoding_after_id = self.root.after(500, self._process_geocoding_results)
@@ -3634,54 +4841,13 @@ class CaseLogApp:
             # Heatmap removed: no final overlay rendering
     # Removed duplicate import_cases_from_xlsx function - using the newer version below
 
-    def _clear_heatmap(self):
-        """Remove any existing heatmap overlay from the map widget."""
-        try:
-            if getattr(self, '_heatmap_layer', None):
-                try:
-                    if hasattr(self._heatmap_layer, 'delete'):
-                        self._heatmap_layer.delete()  # type: ignore[attr-defined]
-                    elif hasattr(self.map_widget, 'delete'):
-                        self.map_widget.delete(self._heatmap_layer)  # type: ignore[attr-defined]
-                except Exception:
-                    pass
-        finally:
-            self._heatmap_layer = None
-
-    def _render_heatmap(self):
-        """Render the heatmap overlay when enabled and supported."""
-        if not getattr(self, '_heatmap_enabled', False):
-            return
-        if not self.map_widget or not hasattr(self.map_widget, 'set_heatmap'):
-            return
-        if not self._heatmap_points:
-            self._clear_heatmap()
-            return
-        try:
-            self._clear_heatmap()
-            self._heatmap_layer = self.map_widget.set_heatmap(self._heatmap_points)  # type: ignore[attr-defined]
-        except Exception as e:
-            logging.warning(f"Heatmap rendering failed: {e}")
-            self._heatmap_layer = None
-
-    def _refresh_heatmap_if_needed(self):
-        """Update or clear the heatmap overlay based on the current toggle state."""
-        if getattr(self, '_heatmap_enabled', False):
-            self._render_heatmap()
-        else:
-            self._clear_heatmap()
-
-    def toggle_heatmap(self):
-        """Callback from the UI toggle to enable or disable the heatmap."""
-        enabled = bool(self.heatmap_var.get()) if hasattr(self, 'heatmap_var') else False
-        if not hasattr(self.map_widget, 'set_heatmap'):
-            enabled = False
-        self._heatmap_enabled = enabled
-        set_user_pref('map_heatmap_enabled', '1' if enabled else '0')
-        self._refresh_heatmap_if_needed()
-
     def on_closing(self):
         """Safely handle application shutdown: stop timers/threads, backup DB, release images, and destroy the UI."""
+        try:
+            self._stop_automation_scheduler()
+        except Exception as exc:
+            logging.debug(f"Failed to stop automation scheduler on shutdown: {exc}")
+
         # Cancel any scheduled .after() callbacks
         try:
             if hasattr(self, '_geocoding_after_id') and self._geocoding_after_id:
@@ -3827,11 +4993,6 @@ class CaseLogApp:
         # self.geolocator = Nominatim(user_agent=APP_NAME)
         self.map_markers = {}  # Dictionary to hold mapview markers with location (city, state) as key
         self._grouped_cases_by_location = {}  # Store cases grouped by location for info bubbles
-        self._location_metrics = {}  # Cache aggregated metrics (counts, volume) per location
-        self._heatmap_layer = None
-        self._heatmap_points = []
-        saved_heatmap_pref = get_user_pref('map_heatmap_enabled', '0')
-        self._heatmap_enabled = str(saved_heatmap_pref).lower() in ('1', 'true', 'yes', 'on', 'y')
 
         # Attributes for View Data Treeview
         self.tree = None
@@ -3848,6 +5009,13 @@ class CaseLogApp:
         self.status_label = None
         self.status_animation_id = None
         self.status_text = ""
+
+        # Automated reports scheduling helpers
+        self._automation_after_id = None
+        self._automation_running = False
+        self._automation_worker_thread = None
+        self.auto_report_status_var = tk.StringVar(master=self.root, value="")
+        self._automation_status_label = None
 
         # Attributes for threading and queue for map loading
         self.geocoding_queue = queue.Queue()
@@ -3889,6 +5057,7 @@ class CaseLogApp:
 
         # Set the window closing protocol to call the cleanup function
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self._start_automation_scheduler()
     def create_widgets(self):
         """
         Creates the main notebook tabs and calls methods to populate them.
@@ -4094,7 +5263,6 @@ class CaseLogApp:
             ("City of Offense", "city_of_offense", "combo", []), 
             ("State of Offense", "state_of_offense", "combo", US_STATE_ABBREVIATIONS), # Added State here
             ("Device Type", "device_type", "combo", ["", "iOS", "Android", "ChromeOS", "Windows", "SD", "HDD", "SDD", "USB", "SW Return", "Zip file", "drone", "other"]),
-            ("Forensic Tool", "forensic_tool", "combo", ["Cellebrite", "GrayKey"]),
             ("Model", "model", "entry"),
             ("OS", "os", "entry")
         ]
@@ -4118,7 +5286,7 @@ class CaseLogApp:
             elif field_type == "combo":
                 var = tk.StringVar()
                 # Load persistent values for editable combos
-                if key in ["examiner", "investigator", "agency", "offense_type", "city_of_offense", "forensic_tool"]:
+                if key in ["examiner", "investigator", "agency", "offense_type", "city_of_offense"]:
                     # Merge persisted + derived values for first render
                     combo_values = self._get_initial_combo_values(key)
                 else:
@@ -4136,7 +5304,7 @@ class CaseLogApp:
                     var.set(combo_values[0])
 
                 # --- Add dynamic entry + context menu for editable combos ---
-                if key in ["examiner", "investigator", "agency", "offense_type", "city_of_offense", "forensic_tool"]:
+                if key in ["examiner", "investigator", "agency", "offense_type", "city_of_offense"]:
                     # Ensure registry exists
                     if not hasattr(self, '_combo_registry'):
                         self._init_combo_registry()
@@ -4284,7 +5452,7 @@ class CaseLogApp:
         # After all widgets are created in create_entry_widgets: live-repopulate editable combos
         if not hasattr(self, '_combo_registry'):
             self._init_combo_registry()
-        for key in ["examiner", "investigator", "agency", "offense_type", "city_of_offense", "forensic_tool"]:
+        for key in ["examiner", "investigator", "agency", "offense_type", "city_of_offense"]:
             try:
                 self._refresh_registered_combos(key, get_combo_values_db(key))
             except Exception:
@@ -4441,7 +5609,6 @@ class CaseLogApp:
             "volume_size_gb": {"text": "Vol (GB)", "width": 60, "type": "numeric"},
             "offense_type": {"text": "Offense", "width": 120},
             "device_type": {"text": "Device", "width": 100},
-            "forensic_tool": {"text": "Forensic Tool", "width": 120},
             "model": {"text": "Model", "width": 100},
             "os": {"text": "OS", "width": 80},
             "data_recovered": {"text": "Recovered?", "width": 70}, # Keep text, will display Yes/No
@@ -4521,33 +5688,46 @@ class CaseLogApp:
     def create_about_widgets(self):
         """Creates the widgets for the About tab with application info."""
         about_text = (
-            f"CyberLab Case Tracker\n"
-            f"\nPurpose:\n"
-            "CyberLab Case Tracker is designed for digital forensic professionals to efficiently manage, track, and report on digital evidence and casework.\n\n"
-            "Key Features:\n"
-            "- Add, edit, and manage digital forensic cases with detailed metadata.\n"
-            "- Track both in-progress and completed cases.\n"
-            "- Generate comprehensive reports (PDF, text, Excel) for cases and date ranges.\n"
-            "- Visualize case data with interactive graphs and maps.\n"
-            "- Import/export case data (Excel, CSV).\n"
-            "- Customizable columns, user preferences, and password protection.\n"
-            "- Auto-update check and easy settings management.\n\n"
-            "Quick Start Guide:\n"
-            "1. Add a new case using the 'New Entry' tab.\n"
-            "2. View, search, and filter all cases in the 'View Data' tab.\n"
-            "3. Track ongoing work in the 'In Progress' tab.\n"
-            "4. Visualize trends in the 'Graphs' tab and locations in the 'Map' tab.\n"
-            "5. Generate and export reports from the 'Reports' menu.\n"
-            "6. Adjust preferences and check for updates in the 'Settings' tab.\n\n"
-            f"Version: v2.1.5 ({RELEASE_DATE})\n"
-            "Developed by RF-YVY. For more info, visit: https://github.com/RF-YVY/CyberLabLog\n"
+            f"{APP_NAME} v{APP_VERSION}\n"
+            f"Release Date: {RELEASE_DATE}\n\n"
+            "Application Overview:\n"
+            "CyberLab Case Tracker centralizes digital forensic case intake, status monitoring, and evidence reporting so labs can manage growing caseloads with confidence.\n\n"
+            "Core Functions & Options:\n"
+            "- Case Intake: Capture examiner, agency, offense details, device metadata, timelines, and structured notes.\n"
+            "- In-Progress Tracking: Prioritize workload, set target dates, and mark cases complete with a single action.\n"
+            "- View & Edit Data: Search, filter, bulk select, inline edit with validation, and export directly from the grid.\n"
+            "- Saved Views & Preferences: Store custom filters, column layouts, themes, and branding elements for rapid reuse.\n"
+            "- Reporting: Produce PDF and Excel summaries, custom packets, and per-case exports with lab headers and totals.\n"
+            "- Mapping & Visualization: Plot offenses on an interactive map and explore trends through configurable graphs.\n"
+            "- Data Safeguards: Automatic backups, manual restore points, and optional password prompts on sensitive actions.\n\n"
+            "What's New in Version 3.0 (Automated Reporting):\n"
+            "- Schedule recurring export runs (weekly, monthly, or all data) with a single configuration.\n"
+            "- Generate fresh PDF summaries, Excel workbooks, graph snapshots, and interactive map bundles in one pass.\n"
+            "- Automatically stage output per report type so files are easy to sync to SharePoint, OneDrive, or other shared locations.\n"
+            "- Equip remote teammates with up-to-date dashboards, charts, and maps without requiring them to open the desktop app.\n\n"
+            "Automation Tips:\n"
+            "- Use the Automated Reports settings to choose date scope, destination folders, and which artifacts to include.\n"
+            "- Point the output directory to a synchronized folder (SharePoint, network share, cloud drive) to publish reports, graphs, and map HTML for remote review.\n"
+            "- Combine automated runs with existing column presets and saved filters to keep every export focused on the metrics your lab watches most.\n\n"
+            "Quick Start Checklist:\n"
+            "1. Add a case from 'New Entry' or import a spreadsheet template.\n"
+            "2. Monitor priorities in 'In Progress' and finalize work in 'View Data'.\n"
+            "3. Explore the 'Graphs' and 'Map' tabs for trend and location insights.\n"
+            "4. Configure Automated Reports under Settings to deliver recurring exports to your team.\n"
+            "5. Visit Settings anytime to adjust appearance, branding, and automation destinations.\n\n"
+            f"Version: v{APP_VERSION} ({RELEASE_DATE})\n"
+            f"Data Directory: {DATA_DIR}\n"
+            f"Database File: {DB_FILENAME}\n"
+            f"Log File: {LOG_FILENAME}\n"
+            "Developer: RF-YVY\n"
+            "Project Home: https://github.com/RF-YVY/CyberLabLog\n"
         )
         about_box = scrolledtext.ScrolledText(self.about_frame, wrap='word', font=("Segoe UI", 11), state='normal', height=28, width=100)
         about_box.insert('1.0', about_text)
         about_box.config(state='disabled')
         about_box.pack(fill='both', expand=True, padx=10, pady=(0,10))
         # Add Check for Updates button
-        update_btn = ttk.Button(self.about_frame, text="Check for Updates", command=self.check_for_updates)
+        update_btn = ttk.Button(self.about_frame, text=f"Check for Updates (v{APP_VERSION})", command=self.check_for_updates)
         update_btn.pack(anchor='e', padx=10, pady=(0,10))
     # --- Saved Filters and Column Presets Helpers ---
     def rebuild_filters_menu(self):
@@ -4879,37 +6059,14 @@ class CaseLogApp:
             old_value = old_values[cell_index] if cell_index < len(old_values) else ''
         except Exception:
             old_value = ''
-        if col_key == 'notes':
-            self._open_long_text_editor(item, col_key, old_value)
-            return
-
         # Choose editor type by column
-        editor = tb.Entry(self.tree)
+        editor = ttk.Entry(self.tree)
         editor.insert(0, str(old_value))
-
-        # Expand editor to improve readability while keeping it on-screen
-        try:
-            self.tree.update_idletasks()
-            tree_width = int(self.tree.winfo_width())
-        except Exception:
-            tree_width = 0
-
-        try:
-            x, y, w, h = int(x), int(y), int(w), int(h)
-        except Exception:
-            pass
-
-        min_width = max(w, 220)
-        width = min(min_width, tree_width) if tree_width else min_width
-        x_coord = x
-        if tree_width and (x_coord + width) > tree_width:
-            x_coord = max(0, tree_width - width)
-
-        editor.place(x=x_coord, y=y, width=width, height=max(h, 24))
+        editor.place(x=x, y=y, width=w, height=h)
         editor.focus_set()
-        editor.select_range(0, tk.END)
 
-        self._inline_edit = {'item': item, 'col_key': col_key, 'old': old_value, 'widget': editor}
+        meta = {'item': item, 'col_key': col_key, 'old': old_value, 'widget': editor}
+        self._inline_edit = meta
 
         def finish(save=True):
             try:
@@ -4920,7 +6077,29 @@ class CaseLogApp:
             self._inline_edit = None
             if not save:
                 return
-            self._apply_treeview_edit(item, col_key, val)
+            # Validate and save
+            ok, conv, err = self._validate_inline_value(col_key, val)
+            if not ok:
+                Messagebox.show_error("Invalid value", err or "Invalid input.")
+                return
+            # Update DB
+            row_vals = self.tree.item(item, 'values') or ()
+            if not row_vals:
+                return
+            case_id = row_vals[0]
+            case = get_case_by_id_db(case_id)
+            if not case:
+                return
+            old_data = dict(case)
+            case[col_key] = conv
+            if update_case_db(case_id, case):
+                # Push undo history
+                self.push_view_edit_history(old_data, dict(case))
+                # Update cell display
+                self.tree.set(item, col_key, conv if conv is not None else '')
+                self.update_status("Saved.")
+            else:
+                Messagebox.show_error("Save failed", "Could not update the case.")
 
         editor.bind('<Return>', lambda e: finish(True))
         editor.bind('<Escape>', lambda e: finish(False))
@@ -4969,71 +6148,6 @@ class CaseLogApp:
             return True, ('Yes' if v.lower() in val_true else 'No'), None
         # Default text
         return True, v or None, None
-
-    def _apply_treeview_edit(self, item, col_key, value):
-        ok, conv, err = self._validate_inline_value(col_key, value)
-        if not ok:
-            Messagebox.show_error("Invalid value", err or "Invalid input.")
-            return False
-
-        row_vals = self.tree.item(item, 'values') or ()
-        if not row_vals:
-            return False
-
-        case_id = row_vals[0]
-        case = get_case_by_id_db(case_id)
-        if not case:
-            return False
-
-        old_data = dict(case)
-        case[col_key] = conv
-        if update_case_db(case_id, case):
-            self.push_view_edit_history(old_data, dict(case))
-            self.tree.set(item, col_key, conv if conv is not None else '')
-            self.update_status("Saved.")
-            return True
-
-        Messagebox.show_error("Save failed", "Could not update the case.")
-        return False
-
-    def _open_long_text_editor(self, item, col_key, old_value):
-        # Provide a larger editor so long text remains visible while editing.
-        win = tk.Toplevel(self.root)
-        win.title(f"Edit {self.tree_columns_config.get(col_key, {}).get('text', col_key)}")
-        win.transient(self.root)
-        win.grab_set()
-
-        try:
-            win.geometry("520x320")
-        except Exception:
-            pass
-
-        label = ttk.Label(win, text="Update the value below:")
-        label.pack(anchor='w', padx=10, pady=(10, 4))
-
-        text_widget = tk.Text(win, wrap='word')
-        text_widget.pack(fill='both', expand=True, padx=10, pady=5)
-        text_widget.insert('1.0', str(old_value or ''))
-        text_widget.focus_set()
-
-        button_frame = ttk.Frame(win)
-        button_frame.pack(fill='x', padx=10, pady=(0, 10))
-
-        def do_save():
-            val = text_widget.get('1.0', 'end-1c')
-            if self._apply_treeview_edit(item, col_key, val):
-                win.destroy()
-
-        def do_cancel():
-            win.destroy()
-
-        save_btn = ttk.Button(button_frame, text="Save", command=do_save)
-        save_btn.pack(side='right', padx=(6, 0))
-        cancel_btn = ttk.Button(button_frame, text="Cancel", command=do_cancel)
-        cancel_btn.pack(side='right')
-
-        win.bind('<Control-Return>', lambda e: do_save())
-        win.bind('<Escape>', lambda e: do_cancel())
 
     def copy_selected_treeview_rows(self):
         # Copy selected rows to clipboard as tab-separated text
@@ -5134,22 +6248,13 @@ class CaseLogApp:
         map_view_combo = ttk.Combobox(map_view_frame, textvariable=self.map_view_var, values=map_view_names, state="readonly", width=24)
         map_view_combo.pack(side='left')
 
-        toggles_frame = ttk.Frame(container)
-        toggles_frame.pack(fill='x', pady=(0, 5), padx=10)
-        self.heatmap_var = tk.BooleanVar(value=self._heatmap_enabled)
-        heatmap_cb = ttk.Checkbutton(toggles_frame, text="Show Heatmap", variable=self.heatmap_var, command=self.toggle_heatmap)
-        heatmap_cb.pack(side='left')
+        # Extras removed: heatmap toggle and zoom preset buttons
 
         # No API key or MapTiler check needed
 
         # Map widget
         self.map_widget = tkintermapview.TkinterMapView(container, width=800, height=600, corner_radius=0)
         self.map_widget.pack(fill='both', expand=True)
-
-        if not hasattr(self.map_widget, 'set_heatmap'):
-            heatmap_cb.configure(state='disabled', text="Heatmap (requires newer map widget)")
-            self._heatmap_enabled = False
-            self.heatmap_var.set(False)
 
         # Fit to Locations button row (below map)
         fit_row = ttk.Frame(container)
@@ -5213,39 +6318,23 @@ class CaseLogApp:
         """
         try:
             city, state = loc
-            metrics = self._location_metrics.get((city, state))
-            if metrics:
-                counts = dict(metrics.get('offense_counts', {}))
-                total_cases = metrics.get('total_cases', 0)
-                total_volume = metrics.get('total_volume_gb', 0.0)
-            else:
-                city_cases = self._grouped_cases_by_location.get((city, state), [])
-                counts = {}
-                total_volume = 0.0
-                for c in city_cases:
-                    offense = (c.get('offense_type') or '').strip()
-                    if offense:
-                        counts[offense] = counts.get(offense, 0) + 1
-                    total_volume += safe_float_conversion(c.get('volume_size_gb'))
-                total_cases = len(city_cases)
+            city_cases = self._grouped_cases_by_location.get((city, state), [])
+            # Count offenses for the city
+            counts = {}
+            for c in city_cases:
+                off = (c.get('offense_type') or '').strip()
+                if not off:
+                    continue
+                counts[off] = counts.get(off, 0) + 1
 
             title = f"{city}, {state}"
-            volume_text = format_volume_for_display(total_volume)
             if counts:
                 items = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
                 bullets = [f"• {name}: {n}" for name, n in items]
-                total = total_cases if total_cases else sum(counts.values())
-                msg = (
-                    f"Total cases: {total}\n"
-                    f"Total volume: {volume_text}\n\n"
-                    + "\n".join(bullets)
-                )
+                total = sum(counts.values())
+                msg = f"Total cases: {total}\n\n" + "\n".join(bullets)
             else:
-                msg = (
-                    f"Total cases: {total_cases}\n"
-                    f"Total volume: {volume_text}\n\n"
-                    "No offenses recorded"
-                )
+                msg = "No offenses recorded"
 
             # Some environments interpret positional args as (message, title);
             # force correct mapping via keywords.
@@ -5383,16 +6472,11 @@ class CaseLogApp:
         controls_frame.pack(fill='x', pady=5, padx=10)
 
         ttk.Label(controls_frame, text="Graph Type:").pack(side='left', padx=(0, 5))
-        self.graph_type_var = tk.StringVar(value="Offense Type")
+        self.graph_type_var = tk.StringVar(value=GRAPH_TYPE_CHOICES[0])
         self.graph_type_combo = tb.Combobox(
             controls_frame,
             textvariable=self.graph_type_var,
-            values=[
-                "Offense Type", "Device Type", "OS", "Agency", "State of Offense",
-                "Examiner", "Investigator", "Forensic Tool", "Year", "City of Offense", "Total Volume (GB/TB)",
-                "Total Volume by Examiner", "Total Volume by Investigator", "Total Volume by Agency", "Total Volume by Device Type",
-                "Total Volume by Forensic Tool"
-            ],
+            values=GRAPH_TYPE_CHOICES,
             state="readonly"
         )
         self.graph_type_combo.pack(side='left', padx=(0, 10))
@@ -5410,17 +6494,10 @@ class CaseLogApp:
         self.graph_year_combo.pack(side='left', padx=(0, 10))
         self.graph_year_combo.bind("<<ComboboxSelected>>", lambda e: self.update_graph())
 
-        ttk.Label(controls_frame, text="Chart Style:").pack(side='left', padx=(0, 5))
-        self.graph_style_var = tk.StringVar(value="Bar")
-        self.graph_style_combo = ttk.Combobox(
-            controls_frame,
-            textvariable=self.graph_style_var,
-            values=["Bar", "Stacked Bar", "Pie", "Line"],
-            state="readonly",
-            width=12
-        )
-        self.graph_style_combo.pack(side='left', padx=(0, 10))
-        self.graph_style_combo.bind("<<ComboboxSelected>>", lambda e: self.update_graph())
+        graph_actions = ttk.Frame(container)
+        graph_actions.pack(fill='x', pady=(0, 5), padx=10)
+        ttk.Button(graph_actions, text="Save Graph Image…", command=self.save_current_graph_image).pack(side='left')
+        ttk.Button(graph_actions, text="Export Graph Data…", command=self.export_current_graph_data).pack(side='left', padx=(5, 0))
 
 
         graph_frame = ttk.Frame(container)
@@ -5461,339 +6538,120 @@ class CaseLogApp:
 
     def update_graph(self):
         """Update the graph display in the Graphs tab."""
+        cases = get_all_cases_db() or []
+        graph_type = self.graph_type_var.get()
+        year_filter = self.graph_year_var.get()
+
+        dataset = build_graph_dataset(cases, graph_type, year_filter)
+
         if not (self.ax and self.fig and self.canvas_agg):
             return
 
-        # Reset axes so previous chart state (like pie equal-aspect) doesn't shrink other plots
-        try:
-            self.ax.set_aspect('auto')
-        except Exception:
-            pass
-
-        graph_type = self.graph_type_var.get()
-        year_filter = self.graph_year_var.get()
-        style = getattr(self, 'graph_style_var', None)
-        style_value = style.get() if isinstance(style, tk.StringVar) else "Bar"
-
-        completed_cases = get_all_cases_db()
-        in_progress_cases = get_all_in_progress_cases_db()
-
-        def filter_cases_by_year(items):
-            if year_filter and year_filter != "All":
-                filtered = []
-                for case in items:
-                    start = (case.get("start_date") or "")
-                    if start and start.startswith(year_filter):
-                        filtered.append(case)
-                return filtered
-            return items
-
-        completed_cases = filter_cases_by_year(completed_cases)
-        in_progress_cases = filter_cases_by_year(in_progress_cases)
-        all_cases = completed_cases + in_progress_cases
-
-        def collect_counts(cases_list, extractor):
-            counts = {}
-            for case in cases_list:
-                key = extractor(case)
-                counts[key] = counts.get(key, 0) + 1
-            return counts
-
-        def collect_volume(cases_list, field):
-            totals = {}
-            for case in cases_list:
-                key = (case.get(field) or "Unknown").strip() or "Unknown"
-                totals[key] = totals.get(key, 0.0) + safe_float_conversion(case.get("volume_size_gb"))
-            return totals
-
-        def sort_keys_by_total(keys, completed_map, in_progress_map):
-            def total_for(key):
-                return completed_map.get(key, 0) + in_progress_map.get(key, 0)
-            return sorted(keys, key=lambda k: (-total_for(k), k.lower()))
-
-        # Handle total volume by groupings
-        group_volume_types = {
-            "Total Volume by Examiner": "examiner",
-            "Total Volume by Investigator": "investigator",
-            "Total Volume by Agency": "agency",
-            "Total Volume by Device Type": "device_type",
-            "Total Volume by Forensic Tool": "forensic_tool",
-        }
-
-        if graph_type in group_volume_types:
-            group_field = group_volume_types[graph_type]
-            completed_totals = collect_volume(completed_cases, group_field)
-            in_progress_totals = collect_volume(in_progress_cases, group_field)
-            combined_keys = sort_keys_by_total(set(completed_totals) | set(in_progress_totals), completed_totals, in_progress_totals)
-            if not combined_keys:
-                self.ax.clear()
-                self.ax.text(0.5, 0.5, "No data to display", ha='center', va='center', fontsize=16)
-                self.canvas_agg.draw()
-                return
-
-            combined_totals = {k: completed_totals.get(k, 0.0) + in_progress_totals.get(k, 0.0) for k in combined_keys}
-            use_tb = any(val > 999 for val in combined_totals.values())
-            def convert(value):
-                return value / 1024.0 if use_tb else value
-
-            if style_value == "Stacked Bar":
-                completed_values = [convert(completed_totals.get(k, 0.0)) for k in combined_keys]
-                in_progress_values = [convert(in_progress_totals.get(k, 0.0)) for k in combined_keys]
-                completed_display = [format_volume_for_display(completed_totals.get(k, 0.0)) for k in combined_keys]
-                in_progress_display = [format_volume_for_display(in_progress_totals.get(k, 0.0)) for k in combined_keys]
-
-                self.ax.clear()
-                bars_completed = self.ax.bar(combined_keys, completed_values, label="Completed", color="#4a90e2")
-                bars_in_progress = self.ax.bar(
-                    combined_keys,
-                    in_progress_values,
-                    bottom=completed_values,
-                    label="In Progress",
-                    color="#f5a623"
-                )
-                totals_display = [format_volume_for_display(combined_totals[k]) for k in combined_keys]
-                for idx, key in enumerate(combined_keys):
-                    stacked_height = completed_values[idx] + in_progress_values[idx]
-                    if stacked_height <= 0:
-                        continue
-                    self.ax.text(idx, stacked_height, totals_display[idx], ha='center', va='bottom', fontsize=9)
-                for bar, val in zip(bars_completed, completed_display):
-                    if bar.get_height() > 0:
-                        self.ax.text(bar.get_x() + bar.get_width()/2, bar.get_height()/2, val, ha='center', va='center', fontsize=8, color='white')
-                for bar, base, val in zip(bars_in_progress, completed_values, in_progress_display):
-                    if bar.get_height() > 0:
-                        self.ax.text(bar.get_x() + bar.get_width()/2, base + bar.get_height()/2, val, ha='center', va='center', fontsize=8, color='black')
-                self.ax.set_ylabel("Total Volume (TB)" if use_tb else "Total Volume (GB)")
-                self.ax.set_xlabel(group_field.replace('_', ' ').title())
-                self.ax.set_title(graph_type)
-                self.ax.legend()
-                self.ax.tick_params(axis='x', rotation=45)
-                self.fig.autofmt_xdate(rotation=45)
-                self.fig.subplots_adjust(bottom=0.27)
-                self.fig.tight_layout()
-                self.canvas_agg.draw()
-                return
-
-            combined_values = [convert(combined_totals[k]) for k in combined_keys]
-            combined_display = [format_volume_for_display(combined_totals[k]) for k in combined_keys]
-
-            if style_value == "Pie":
-                if not any(combined_totals[k] > 0 for k in combined_keys):
-                    self.ax.clear()
-                    self.ax.text(0.5, 0.5, "No data to display", ha='center', va='center', fontsize=16)
-                    self.canvas_agg.draw()
-                    return
-                self.ax.clear()
-                try:
-                    self.ax.set_aspect('equal')
-                except Exception:
-                    pass
-                self.ax.pie(
-                    combined_values,
-                    labels=combined_keys,
-                    autopct='%1.1f%%',
-                    startangle=90,
-                    pctdistance=0.8
-                )
-                self.ax.set_title(graph_type)
-                self.fig.tight_layout()
-                self.canvas_agg.draw()
-                return
-
-            if style_value == "Line":
-                self.ax.clear()
-                self.ax.plot(range(len(combined_keys)), combined_values, marker='o', color="#4a90e2")
-                self.ax.set_xticks(range(len(combined_keys)))
-                self.ax.set_xticklabels(combined_keys, rotation=45, ha='right')
-                self.ax.set_ylabel("Total Volume (TB)" if use_tb else "Total Volume (GB)")
-                self.ax.set_xlabel(group_field.replace('_', ' ').title())
-                self.ax.set_title(graph_type)
-                for idx, value in enumerate(combined_values):
-                    if value <= 0:
-                        continue
-                    self.ax.text(idx, value, combined_display[idx], ha='center', va='bottom', fontsize=9)
-                self.fig.subplots_adjust(bottom=0.27)
-                self.fig.tight_layout()
-                self.canvas_agg.draw()
-                return
-
-            # Default bar chart for volume
-            self.ax.clear()
-            bars = self.ax.bar(combined_keys, combined_values, color="#4a90e2")
-            self.ax.set_xlabel(group_field.replace('_', ' ').title())
-            self.ax.set_ylabel("Total Volume (TB)" if use_tb else "Total Volume (GB)")
-            self.ax.set_title(graph_type)
-            self.ax.tick_params(axis='x', rotation=45)
-            self.fig.autofmt_xdate(rotation=45)
-            for bar, label in zip(bars, combined_display):
-                if bar.get_height() > 0:
-                    self.ax.text(bar.get_x() + bar.get_width()/2, bar.get_height(), label, ha='center', va='bottom', fontsize=9)
-            self.fig.subplots_adjust(bottom=0.27)
-            self.fig.tight_layout()
-            self.canvas_agg.draw()
-            return
-
-        if graph_type == "Total Volume (GB/TB)":
-            total_gb = sum(safe_float_conversion(case.get("volume_size_gb")) for case in all_cases)
-            if total_gb <= 0:
-                self.ax.clear()
-                self.ax.text(0.5, 0.5, "No volume recorded", ha='center', va='center', fontsize=16)
-                self.canvas_agg.draw()
-                return
-            if total_gb > 999:
-                total_val = total_gb / 1024.0
-                y_label = "Total Volume (TB)"
-                display_value = f"{total_val:.2f} TB"
-            else:
-                total_val = total_gb
-                y_label = "Total Volume (GB)"
-                display_value = f"{total_val:.2f} GB"
-
-            self.ax.clear()
-            self.ax.bar(["Total"], [total_val], color="#4a90e2")
-            self.ax.set_ylabel(y_label)
-            self.ax.set_title("Total Volume of All Cases")
-            self.ax.text(0, total_val, display_value, ha='center', va='bottom', fontsize=14, fontweight='bold')
-            self.fig.tight_layout()
-            self.canvas_agg.draw()
-            return
-
-        # Map graph type to DB field for count-based charts
-        graph_field_map = {
-            "Offense Type": "offense_type",
-            "Device Type": "device_type",
-            "OS": "os",
-            "Agency": "agency",
-            "State of Offense": "state_of_offense",
-            "Examiner": "examiner",
-            "Investigator": "investigator",
-            "Forensic Tool": "forensic_tool",
-            "Year": "start_date",
-            "City of Offense": "city_of_offense",
-        }
-
-        def year_extractor(case):
-            for key in ("start_date", "created_at"):
-                value = case.get(key)
-                if value and len(str(value)) >= 4:
-                    year = str(value)[:4]
-                    if year.isdigit():
-                        return year
-            return "Unknown"
-
-        if graph_type == "Year":
-            current_extractor = year_extractor
-            xlabel = "Year"
-        else:
-            field = graph_field_map.get(graph_type, "offense_type")
-
-            def value_extractor(case, field_name=field):
-                value = (case.get(field_name) or "Unknown").strip()
-                return value if value else "Unknown"
-
-            current_extractor = value_extractor
-            xlabel = graph_type
-
-        completed_counts = collect_counts(completed_cases, current_extractor)
-        in_progress_counts = collect_counts(in_progress_cases, current_extractor)
-        combined_keys = sort_keys_by_total(set(completed_counts) | set(in_progress_counts), completed_counts, in_progress_counts)
-
-        if not combined_keys:
-            self.ax.clear()
-            self.ax.text(0.5, 0.5, "No data to display", ha='center', va='center', fontsize=16)
-            self.canvas_agg.draw()
-            return
-
-        if style_value == "Stacked Bar":
-            completed_values = [completed_counts.get(k, 0) for k in combined_keys]
-            in_progress_values = [in_progress_counts.get(k, 0) for k in combined_keys]
-            totals = [completed_values[i] + in_progress_values[i] for i in range(len(combined_keys))]
-
-            self.ax.clear()
-            bars_completed = self.ax.bar(combined_keys, completed_values, label="Completed", color="#4a90e2")
-            bars_in_progress = self.ax.bar(
-                combined_keys,
-                in_progress_values,
-                bottom=completed_values,
-                label="In Progress",
-                color="#f5a623"
-            )
-            for idx, total in enumerate(totals):
-                if total > 0:
-                    self.ax.text(idx, total, str(total), ha='center', va='bottom', fontsize=9)
-            self.ax.set_ylabel("Count")
-            self.ax.set_xlabel(xlabel)
-            self.ax.set_title(f"{graph_type} Distribution")
-            self.ax.legend()
-            self.ax.tick_params(axis='x', rotation=45)
-            self.fig.autofmt_xdate(rotation=45)
-            self.fig.subplots_adjust(bottom=0.27)
-            self.fig.tight_layout()
-            self.canvas_agg.draw()
-            return
-
-        combined_counts = {k: completed_counts.get(k, 0) + in_progress_counts.get(k, 0) for k in combined_keys}
-        combined_values = [combined_counts[k] for k in combined_keys]
-
-        if style_value == "Pie":
-            if not any(combined_counts[k] > 0 for k in combined_keys):
-                self.ax.clear()
-                self.ax.text(0.5, 0.5, "No data to display", ha='center', va='center', fontsize=16)
-                self.canvas_agg.draw()
-                return
-            self.ax.clear()
-            try:
-                self.ax.set_aspect('equal')
-            except Exception:
-                pass
-            self.ax.pie(
-                combined_values,
-                labels=combined_keys,
-                autopct='%1.1f%%',
-                startangle=90,
-                pctdistance=0.8
-            )
-            self.ax.set_title(f"{graph_type} Distribution")
-            self.fig.tight_layout()
-            self.canvas_agg.draw()
-            return
-
-        if style_value == "Line":
-            self.ax.clear()
-            self.ax.plot(range(len(combined_keys)), combined_values, marker='o', color="#4a90e2")
-            self.ax.set_xticks(range(len(combined_keys)))
-            self.ax.set_xticklabels(combined_keys, rotation=45, ha='right')
-            self.ax.set_ylabel("Count")
-            self.ax.set_xlabel(xlabel)
-            self.ax.set_title(f"{graph_type} Distribution")
-            for idx, value in enumerate(combined_values):
-                if value > 0:
-                    self.ax.text(idx, value, str(value), ha='center', va='bottom', fontsize=9)
-            self.fig.subplots_adjust(bottom=0.27)
-            self.fig.tight_layout()
-            self.canvas_agg.draw()
-            return
-
-        # Default bar chart for counts
         self.ax.clear()
-        bars = self.ax.bar(combined_keys, combined_values, color="#4a90e2")
+
+        if not dataset or not dataset.get("labels"):
+            self.ax.text(0.5, 0.5, "No data to display", ha='center', va='center', fontsize=16)
+            self.ax.set_axis_off()
+            self.canvas_agg.draw()
+            return
+
+        labels = dataset.get("labels", [])
+        values = dataset.get("plot_values", [])
+        display_values = dataset.get("display_values", [])
+        xlabel = dataset.get("xlabel", "")
+        y_label = dataset.get("y_label", "")
+        title = dataset.get("title", graph_type)
+
+        bars = self.ax.bar(labels, values, color="#4a90e2", align='center')
         self.ax.set_xlabel(xlabel)
-        self.ax.set_ylabel("Count")
-        self.ax.set_title(f"{graph_type} Distribution")
+        self.ax.set_ylabel(y_label)
+        self.ax.set_title(title)
         self.ax.tick_params(axis='x', rotation=45)
         self.fig.autofmt_xdate(rotation=45)
-        for bar, value in zip(bars, combined_values):
-            if value > 0:
-                self.ax.text(bar.get_x() + bar.get_width()/2, bar.get_height(), str(value), ha='center', va='bottom', fontsize=9)
-        self.fig.subplots_adjust(bottom=0.27)
+        self.fig.subplots_adjust(bottom=0.25)
+        for bar, label in zip(bars, display_values):
+            height = bar.get_height()
+            self.ax.text(bar.get_x() + bar.get_width() / 2, height, label, ha='center', va='bottom', fontsize=9)
+
         self.fig.tight_layout()
         self.canvas_agg.draw()
+
+    def _get_current_graph_dataset(self) -> dict | None:
+        try:
+            cases = get_all_cases_db() or []
+        except Exception as exc:
+            logging.error("Unable to retrieve cases for graph export: %s", exc)
+            return None
+        graph_type = self.graph_type_var.get() if hasattr(self, 'graph_type_var') else GRAPH_TYPE_CHOICES[0]
+        year_filter = self.graph_year_var.get() if hasattr(self, 'graph_year_var') else "All"
+        return build_graph_dataset(cases, graph_type, year_filter)
+
+    def save_current_graph_image(self):
+        dataset = self._get_current_graph_dataset()
+        if not dataset:
+            Messagebox.show_info("Graph Export", "No data available for the current graph.")
+            return
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        slug = slugify_filename(dataset.get('graph_type', 'graph'))
+        if dataset.get('year_filter') and dataset['year_filter'] != 'All':
+            slug = f"{slug}_{slugify_filename(dataset['year_filter'])}"
+        default_name = f"{slug}_{timestamp}.png"
+        path = filedialog.asksaveasfilename(
+            title="Save Graph Image",
+            defaultextension=".png",
+            filetypes=[("PNG Image", "*.png")],
+            initialfile=default_name,
+        )
+        if not path:
+            return
+        try:
+            render_graph_dataset_to_png(dataset, path)
+            Messagebox.show_info("Graph Export", f"Graph image saved to:\n{path}")
+        except Exception as exc:
+            logging.error("Failed to save graph image: %s", exc)
+            Messagebox.show_error("Graph Export", f"Failed to save graph image.\n\n{exc}")
+
+    def export_current_graph_data(self):
+        dataset = self._get_current_graph_dataset()
+        if not dataset or not dataset.get('csv_rows'):
+            Messagebox.show_info("Graph Export", "No data available to export for the current graph.")
+            return
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        slug = slugify_filename(dataset.get('graph_type', 'graph'))
+        if dataset.get('year_filter') and dataset['year_filter'] != 'All':
+            slug = f"{slug}_{slugify_filename(dataset['year_filter'])}"
+        default_name = f"{slug}_{timestamp}.csv"
+        path = filedialog.asksaveasfilename(
+            title="Export Graph Data",
+            defaultextension=".csv",
+            filetypes=[("CSV", "*.csv")],
+            initialfile=default_name,
+        )
+        if not path:
+            return
+        try:
+            write_graph_dataset_to_csv(dataset, path)
+            Messagebox.show_info("Graph Export", f"Graph data exported to:\n{path}")
+        except Exception as exc:
+            logging.error("Failed to export graph data: %s", exc)
+            Messagebox.show_error("Graph Export", f"Failed to export graph data.\n\n{exc}")
 
     def create_settings_widgets(self):
         # """Creates the widgets for the Settings tab."""
         self.settings_frame.rowconfigure(0, weight=1)
         self.settings_frame.columnconfigure(0, weight=1)
-        settings_content_frame = ttk.Frame(self.settings_frame)
+        settings_notebook = ttk.Notebook(self.settings_frame)
+        settings_notebook.pack(fill='both', expand=True)
+
+        general_tab = ttk.Frame(settings_notebook)
+        automated_tab = ttk.Frame(settings_notebook)
+
+        settings_notebook.add(general_tab, text='General')
+        settings_notebook.add(automated_tab, text='Automated Reports')
+        self.settings_notebook = settings_notebook
+        self.automated_reports_tab = automated_tab
+
+        settings_content_frame = ttk.Frame(general_tab)
         settings_content_frame.pack(fill='both', expand=True)
         # --- Auto Update Check Option ---
         auto_update_var = tk.BooleanVar(value=get_user_pref('auto_update_check', True))
@@ -6023,8 +6881,837 @@ class CaseLogApp:
 
         theme_combo.bind("<<ComboboxSelected>>", on_theme_change)
 
+        self._build_automated_reports_tab(automated_tab)
+
 
     # --- Data Handling and UI Refresh ---
+
+    def _build_automated_reports_tab(self, parent):
+        """Render the Automated Reports tab inside Settings."""
+        config = load_automated_reports_config()
+
+        outer = ttk.Frame(parent)
+        outer.pack(fill='both', expand=True)
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(0, weight=1)
+
+        canvas = tk.Canvas(outer, borderwidth=0, highlightthickness=0)
+        vscroll = ttk.Scrollbar(outer, orient='vertical', command=canvas.yview)
+        canvas.configure(yscrollcommand=vscroll.set)
+        canvas.grid(row=0, column=0, sticky='nsew')
+        vscroll.grid(row=0, column=1, sticky='ns')
+
+        wrapper = ttk.Frame(canvas, padding=10)
+        canvas_window = canvas.create_window((0, 0), window=wrapper, anchor='nw')
+
+        def _on_wrapper_configure(event=None):
+            try:
+                canvas.configure(scrollregion=canvas.bbox('all'))
+            except Exception:
+                pass
+
+        wrapper.bind('<Configure>', _on_wrapper_configure)
+
+        def _on_canvas_configure(event):
+            try:
+                canvas.itemconfigure(canvas_window, width=event.width)
+            except Exception:
+                pass
+
+        canvas.bind('<Configure>', _on_canvas_configure)
+
+        def _on_mousewheel(event):
+            try:
+                delta = -int(event.delta / 120)
+                canvas.yview_scroll(delta, 'units')
+            except Exception:
+                pass
+
+        def _bind_mousewheel(widget):
+            widget.bind('<Enter>', lambda e: widget.bind_all('<MouseWheel>', _on_mousewheel))
+            widget.bind('<Leave>', lambda e: widget.unbind_all('<MouseWheel>'))
+
+        _bind_mousewheel(wrapper)
+        _bind_mousewheel(canvas)
+
+        intro = ttk.Label(
+            wrapper,
+            text="Configure scheduled report generation and local export options.",
+            wraplength=520,
+            justify='left',
+        )
+        intro.grid(row=0, column=0, sticky='w', pady=(0, 10))
+
+        # Local output folder selection
+        output_frame = ttk.LabelFrame(wrapper, text="Local Output Folder")
+        output_frame.grid(row=1, column=0, sticky='ew', pady=5)
+        output_frame.columnconfigure(0, weight=1)
+
+        default_output = config.get('output_dir', DEFAULT_AUTOMATED_REPORTS_CONFIG['output_dir'])
+        self.auto_report_output_dir_var = tk.StringVar(value=default_output)
+        output_entry = ttk.Entry(output_frame, textvariable=self.auto_report_output_dir_var)
+        output_entry.grid(row=0, column=0, sticky='ew', padx=8, pady=8)
+
+        browse_btn = ttk.Button(output_frame, text="Browse…", command=self._browse_auto_report_output_dir)
+        browse_btn.grid(row=0, column=1, padx=8, pady=8)
+
+        open_btn = ttk.Button(output_frame, text="Open Folder", command=self._open_auto_report_output_dir)
+        open_btn.grid(row=0, column=2, padx=(0, 8), pady=8)
+
+        # Frequency & filters
+        schedule_frame = ttk.LabelFrame(wrapper, text="Schedule & Filters")
+        schedule_frame.grid(row=2, column=0, sticky='ew', pady=5)
+        schedule_frame.columnconfigure(1, weight=1)
+        schedule_frame.columnconfigure(3, weight=1)
+
+        self._auto_report_frequency_map = {
+            "Daily": "daily",
+            "Weekly": "weekly",
+            "Monthly": "monthly",
+            "Manual": "manual",
+        }
+        reverse_frequency_map = {v: k for k, v in self._auto_report_frequency_map.items()}
+        freq_value = reverse_frequency_map.get(str(config.get('frequency', 'weekly')).lower(), 'Weekly')
+        self.auto_report_frequency_var = tk.StringVar(value=freq_value)
+
+        ttk.Label(schedule_frame, text="Frequency:").grid(row=0, column=0, sticky='w', padx=8, pady=(8, 4))
+        freq_combo = ttk.Combobox(
+            schedule_frame,
+            textvariable=self.auto_report_frequency_var,
+            values=list(self._auto_report_frequency_map.keys()),
+            state='readonly',
+            width=14,
+        )
+        freq_combo.grid(row=0, column=1, sticky='w', padx=8, pady=(8, 4))
+        freq_combo.bind("<<ComboboxSelected>>", self._on_auto_report_frequency_change)
+
+        weekly_default = config.get('schedule_weekday', DEFAULT_AUTOMATED_REPORTS_CONFIG['schedule_weekday'])
+        if weekly_default not in WEEKDAY_CHOICES:
+            weekly_default = WEEKDAY_CHOICES[0]
+        self.auto_report_weekday_var = tk.StringVar(value=weekly_default)
+        ttk.Label(schedule_frame, text="Weekly On:").grid(row=3, column=0, sticky='w', padx=8, pady=(2, 4))
+        self.auto_report_weekday_combo = ttk.Combobox(
+            schedule_frame,
+            textvariable=self.auto_report_weekday_var,
+            values=WEEKDAY_CHOICES,
+            state='readonly',
+            width=14,
+        )
+        self.auto_report_weekday_combo.grid(row=3, column=1, sticky='w', padx=8, pady=(2, 4))
+
+        month_day_default = config.get('schedule_month_day', DEFAULT_AUTOMATED_REPORTS_CONFIG['schedule_month_day'])
+        month_day_default = str(month_day_default)
+        if month_day_default.lower() in {"last", "last day"}:
+            month_day_default = "Last Day"
+        elif month_day_default not in MONTH_DAY_CHOICES:
+            month_day_default = "1"
+        self.auto_report_month_day_var = tk.StringVar(value=month_day_default)
+        ttk.Label(schedule_frame, text="Monthly On:").grid(row=4, column=0, sticky='w', padx=8, pady=(2, 8))
+        self.auto_report_month_day_combo = ttk.Combobox(
+            schedule_frame,
+            textvariable=self.auto_report_month_day_var,
+            values=MONTH_DAY_CHOICES,
+            state='readonly',
+            width=14,
+        )
+        self.auto_report_month_day_combo.grid(row=4, column=1, sticky='w', padx=8, pady=(2, 8))
+
+        self.auto_report_recent_only_var = tk.BooleanVar(value=bool(config.get('recent_only')))
+        recent_chk = ttk.Checkbutton(
+            schedule_frame,
+            text="Limit Total Case Summary to recent activity",
+            variable=self.auto_report_recent_only_var,
+        )
+        recent_chk.grid(row=1, column=0, columnspan=2, sticky='w', padx=8, pady=(4, 2))
+
+        ttk.Label(schedule_frame, text="Recent Days:").grid(row=2, column=0, sticky='w', padx=8, pady=(2, 8))
+        recent_days_default = int(config.get('recent_days', DEFAULT_AUTOMATED_REPORTS_CONFIG['recent_days']) or 0)
+        self.auto_report_recent_days_var = tk.IntVar(value=recent_days_default)
+        self.auto_report_recent_days_spin = tk.Spinbox(
+            schedule_frame,
+            from_=0,
+            to=365,
+            width=6,
+            textvariable=self.auto_report_recent_days_var,
+        )
+        self.auto_report_recent_days_spin.grid(row=2, column=1, sticky='w', padx=8, pady=(2, 8))
+
+        ttk.Label(schedule_frame, text="PDF Page Size:").grid(row=0, column=2, sticky='w', padx=8, pady=(8, 4))
+        page_sizes = ["Letter", "Legal", "A4"]
+        self.auto_report_page_size_var = tk.StringVar(value=config.get('page_size', DEFAULT_AUTOMATED_REPORTS_CONFIG['page_size']))
+        page_combo = ttk.Combobox(
+            schedule_frame,
+            textvariable=self.auto_report_page_size_var,
+            values=page_sizes,
+            state='readonly',
+            width=14,
+        )
+        page_combo.grid(row=0, column=3, sticky='w', padx=8, pady=(8, 4))
+
+        ttk.Label(schedule_frame, text="Orientation:").grid(row=1, column=2, sticky='w', padx=8, pady=(4, 8))
+        orientations = ["Auto", "Portrait", "Landscape"]
+        self.auto_report_orientation_var = tk.StringVar(value=config.get('orientation', DEFAULT_AUTOMATED_REPORTS_CONFIG['orientation']))
+        orientation_combo = ttk.Combobox(
+            schedule_frame,
+            textvariable=self.auto_report_orientation_var,
+            values=orientations,
+            state='readonly',
+            width=14,
+        )
+        orientation_combo.grid(row=1, column=3, sticky='w', padx=8, pady=(4, 8))
+
+        # Report type selection
+        reports_frame = ttk.LabelFrame(wrapper, text="Reports to Generate")
+        reports_frame.grid(row=3, column=0, sticky='ew', pady=5)
+        reports_frame.columnconfigure(0, weight=1)
+        reports_frame.columnconfigure(1, weight=1)
+
+        self.auto_report_report_vars = {}
+        selected_types = set(config.get('report_types', DEFAULT_AUTOMATED_REPORTS_CONFIG['report_types']))
+        for idx, (key, label) in enumerate(AUTOMATED_REPORT_TYPES.items()):
+            var = tk.BooleanVar(value=key in selected_types)
+            chk = ttk.Checkbutton(reports_frame, text=label, variable=var)
+            chk.grid(row=idx // 2, column=idx % 2, sticky='w', padx=8, pady=4)
+            self.auto_report_report_vars[key] = var
+
+        checkbox_rows = (len(AUTOMATED_REPORT_TYPES) + 1) // 2
+        ttk.Separator(reports_frame).grid(row=checkbox_rows, column=0, columnspan=2, sticky='ew', padx=8, pady=(8, 4))
+
+        range_mode = str(config.get('date_range_mode', DEFAULT_AUTOMATED_REPORTS_CONFIG['date_range_mode']) or 'current_week').lower()
+        if range_mode not in DATE_RANGE_MODE_LABELS:
+            range_mode = DEFAULT_AUTOMATED_REPORTS_CONFIG['date_range_mode']
+        self._auto_report_date_range_label_to_code = {label: code for code, label in DATE_RANGE_MODE_LABELS.items()}
+        range_label_values = list(DATE_RANGE_MODE_LABELS.values())
+        self.auto_report_date_range_var = tk.StringVar(value=DATE_RANGE_MODE_LABELS[range_mode])
+
+        ttk.Label(reports_frame, text="Report date scope:").grid(row=checkbox_rows + 1, column=0, sticky='w', padx=8, pady=(4, 2))
+        date_scope_combo = ttk.Combobox(
+            reports_frame,
+            textvariable=self.auto_report_date_range_var,
+            values=range_label_values,
+            state='readonly',
+            width=20,
+        )
+        date_scope_combo.grid(row=checkbox_rows + 1, column=1, sticky='w', padx=8, pady=(4, 2))
+        scope_hint = ttk.Label(reports_frame, text="Select whether automated reports cover the current week or the current month.")
+        try:
+            scope_hint.configure(foreground="gray")
+        except Exception:
+            pass
+        scope_hint.grid(row=checkbox_rows + 2, column=0, columnspan=2, sticky='w', padx=8, pady=(0, 6))
+
+        # Per-report output overrides
+        per_report_frame = ttk.LabelFrame(wrapper, text="Per-Report Output Locations")
+        per_report_frame.grid(row=4, column=0, sticky='ew', pady=5)
+        per_report_frame.columnconfigure(1, weight=1)
+        self.auto_report_report_dir_vars: dict[str, tk.StringVar] = {}
+
+        report_output_dirs = config.get('report_output_dirs', {}) or {}
+        for row_idx, (report_key, report_label) in enumerate(AUTOMATED_REPORT_TYPES.items()):
+            ttk.Label(per_report_frame, text=f"{report_label}:").grid(row=row_idx, column=0, sticky='w', padx=8, pady=4)
+            var = tk.StringVar(value=str(report_output_dirs.get(report_key, "")))
+            entry = ttk.Entry(per_report_frame, textvariable=var)
+            entry.grid(row=row_idx, column=1, sticky='ew', padx=8, pady=4)
+            browse_btn = ttk.Button(
+                per_report_frame,
+                text="Browse…",
+                command=lambda k=report_key: self._browse_report_type_output_dir(k),
+            )
+            browse_btn.grid(row=row_idx, column=2, padx=4, pady=4)
+            reset_btn = ttk.Button(
+                per_report_frame,
+                text="Use Default",
+                command=lambda k=report_key: self._reset_report_type_output_dir(k),
+            )
+            reset_btn.grid(row=row_idx, column=3, padx=(0, 8), pady=4)
+            default_hint = REPORT_TYPE_DEFAULT_SUBDIRS.get(report_key, "") or "Base folder"
+            hint_text = f"Default: {default_hint}"
+            hint_label = ttk.Label(per_report_frame, text=hint_text)
+            try:
+                hint_label.configure(foreground="gray")
+            except Exception:
+                pass
+            hint_label.grid(row=row_idx, column=4, sticky='w', padx=(0, 8), pady=4)
+            self.auto_report_report_dir_vars[report_key] = var
+
+        # Graph export options
+        graph_frame = ttk.LabelFrame(wrapper, text="Graph Snapshot Options")
+        graph_frame.grid(row=5, column=0, sticky='ew', pady=5)
+        graph_frame.columnconfigure(0, weight=1)
+        graph_frame.columnconfigure(1, weight=1)
+
+        graph_settings = config.get('graph_settings', DEFAULT_GRAPH_EXPORT_SETTINGS)
+        selected_graph_types = graph_settings.get('types') or DEFAULT_GRAPH_EXPORT_SETTINGS['types']
+        self.auto_report_graph_type_vars: dict[str, tk.BooleanVar] = {}
+
+        types_container = ttk.Frame(graph_frame)
+        types_container.grid(row=0, column=0, columnspan=2, sticky='ew', padx=8, pady=(8, 4))
+        types_container.columnconfigure(0, weight=1)
+        types_container.columnconfigure(1, weight=1)
+
+        for idx, graph_type in enumerate(GRAPH_TYPE_CHOICES):
+            var = tk.BooleanVar(value=graph_type in selected_graph_types)
+            chk = ttk.Checkbutton(types_container, text=graph_type, variable=var)
+            chk.grid(row=idx // 2, column=idx % 2, sticky='w', padx=4, pady=2)
+            self.auto_report_graph_type_vars[graph_type] = var
+
+        options_container = ttk.Frame(graph_frame)
+        options_container.grid(row=1, column=0, columnspan=2, sticky='ew', padx=8, pady=(4, 8))
+
+        self.auto_report_graph_include_png_var = tk.BooleanVar(value=bool(graph_settings.get('include_png', True)))
+        self.auto_report_graph_include_csv_var = tk.BooleanVar(value=bool(graph_settings.get('include_csv', True)))
+        ttk.Checkbutton(options_container, text="Save PNG images", variable=self.auto_report_graph_include_png_var).grid(row=0, column=0, sticky='w', padx=4, pady=2)
+        ttk.Checkbutton(options_container, text="Export CSV data", variable=self.auto_report_graph_include_csv_var).grid(row=0, column=1, sticky='w', padx=4, pady=2)
+
+        ttk.Label(options_container, text="Year filter:").grid(row=1, column=0, sticky='w', padx=4, pady=(6, 2))
+        self.auto_report_graph_year_var = tk.StringVar(value=graph_settings.get('year_filter', 'All') or 'All')
+        self.auto_report_graph_year_combo = ttk.Combobox(
+            options_container,
+            textvariable=self.auto_report_graph_year_var,
+            values=['All'],
+            state='readonly',
+            width=12,
+        )
+        self.auto_report_graph_year_combo.grid(row=1, column=1, sticky='w', padx=(4, 12), pady=(6, 2))
+
+        ttk.Button(
+            options_container,
+            text="Refresh Years",
+            command=self._update_settings_graph_year_options,
+        ).grid(row=1, column=2, sticky='w', padx=4, pady=(6, 2))
+
+        graph_hint = "Select the graph types and outputs to include in automated snapshots."
+        graph_hint_label = ttk.Label(options_container, text=graph_hint)
+        try:
+            graph_hint_label.configure(foreground="gray")
+        except Exception:
+            pass
+        graph_hint_label.grid(row=2, column=0, columnspan=3, sticky='w', padx=4, pady=(6, 0))
+
+        # Map export options
+        map_frame = ttk.LabelFrame(wrapper, text="Map Export Options")
+        map_frame.grid(row=6, column=0, sticky='ew', pady=5)
+        map_frame.columnconfigure(0, weight=1)
+
+        map_settings = config.get('map_settings', DEFAULT_MAP_EXPORT_SETTINGS)
+        self.auto_report_map_include_completed_var = tk.BooleanVar(value=bool(map_settings.get('include_completed', True)))
+        self.auto_report_map_include_in_progress_var = tk.BooleanVar(value=bool(map_settings.get('include_in_progress', True)))
+        self.auto_report_map_include_case_details_var = tk.BooleanVar(value=bool(map_settings.get('include_case_details', True)))
+        self.auto_report_map_include_data_var = tk.BooleanVar(value=bool(map_settings.get('include_data_file', True)))
+
+        ttk.Checkbutton(map_frame, text="Include completed cases", variable=self.auto_report_map_include_completed_var).grid(row=0, column=0, sticky='w', padx=8, pady=4)
+        ttk.Checkbutton(map_frame, text="Include in-progress cases", variable=self.auto_report_map_include_in_progress_var).grid(row=1, column=0, sticky='w', padx=8, pady=4)
+        ttk.Checkbutton(map_frame, text="Embed case details in popup tables", variable=self.auto_report_map_include_case_details_var).grid(row=2, column=0, sticky='w', padx=8, pady=4)
+        ttk.Checkbutton(map_frame, text="Export marker data file", variable=self.auto_report_map_include_data_var).grid(row=3, column=0, sticky='w', padx=8, pady=(4, 8))
+        map_hint = "Generates an interactive HTML map and optional CSV/JSON data alongside it."
+        map_hint_label = ttk.Label(map_frame, text=map_hint)
+        try:
+            map_hint_label.configure(foreground="gray")
+        except Exception:
+            pass
+        map_hint_label.grid(row=4, column=0, sticky='w', padx=8, pady=(0, 6))
+
+        # Actions
+        actions_frame = ttk.Frame(wrapper)
+        actions_frame.grid(row=7, column=0, sticky='ew', pady=(10, 0))
+        actions_frame.columnconfigure(0, weight=1)
+
+        save_btn = ttk.Button(actions_frame, text="Save Settings", command=self._save_automated_reports_settings)
+        save_btn.grid(row=0, column=1, padx=8)
+
+        run_btn = ttk.Button(actions_frame, text="Run Now", command=self._run_automated_reports_now)
+        run_btn.grid(row=0, column=2, padx=8)
+
+        status_frame = ttk.Frame(wrapper)
+        status_frame.grid(row=8, column=0, sticky='ew', pady=(10, 0))
+        status_frame.columnconfigure(0, weight=1)
+
+        status_var = self.auto_report_status_var
+        if not isinstance(status_var, tk.StringVar):
+            status_var = tk.StringVar(master=self.root, value="")
+            self.auto_report_status_var = status_var
+        status_label = ttk.Label(status_frame, textvariable=status_var)
+        try:
+            status_label.configure(foreground="gray")
+        except Exception:
+            pass
+        status_label.grid(row=0, column=0, sticky='w', padx=8)
+        self._automation_status_label = status_label
+
+        self._update_schedule_frequency_controls()
+        self._update_settings_graph_year_options()
+        self._refresh_automation_status_label(config)
+
+    def _browse_auto_report_output_dir(self):
+        from tkinter import filedialog
+
+        current = self.auto_report_output_dir_var.get().strip() if hasattr(self, 'auto_report_output_dir_var') else ''
+        selected = filedialog.askdirectory(title="Select Output Folder", initialdir=current or BASE_DIR)
+        if selected:
+            self.auto_report_output_dir_var.set(selected)
+
+    def _open_auto_report_output_dir(self):
+        try:
+            path = self.auto_report_output_dir_var.get().strip()
+            if not path:
+                Messagebox.show_info("Automated Reports", "Set an output folder first.")
+                return
+            os.makedirs(path, exist_ok=True)
+            os.startfile(os.path.abspath(path))
+        except Exception as exc:
+            Messagebox.show_error("Automated Reports", f"Could not open folder.\n\n{exc}")
+
+    def _browse_report_type_output_dir(self, report_type: str) -> None:
+        if not hasattr(self, 'auto_report_report_dir_vars'):
+            return
+        var = self.auto_report_report_dir_vars.get(report_type)
+        if not isinstance(var, tk.StringVar):
+            return
+
+        from tkinter import filedialog
+
+        base_dir = self.auto_report_output_dir_var.get().strip() if hasattr(self, 'auto_report_output_dir_var') else ''
+        current_value = var.get().strip()
+        initial_dir = current_value or base_dir or BASE_DIR
+        selected = filedialog.askdirectory(
+            title=f"Select folder for {AUTOMATED_REPORT_TYPES.get(report_type, 'report')}",
+            initialdir=initial_dir or BASE_DIR,
+        )
+        if not selected:
+            return
+
+        selected_path = os.path.abspath(selected)
+        if base_dir:
+            try:
+                base_path = os.path.abspath(base_dir)
+                common = os.path.commonpath([selected_path, base_path])
+                if common == base_path:
+                    relative = os.path.relpath(selected_path, base_path)
+                    if relative == '.':
+                        var.set('')
+                    else:
+                        var.set(relative)
+                    return
+            except Exception:
+                pass
+        var.set(selected_path)
+
+    def _reset_report_type_output_dir(self, report_type: str) -> None:
+        if not hasattr(self, 'auto_report_report_dir_vars'):
+            return
+        var = self.auto_report_report_dir_vars.get(report_type)
+        if isinstance(var, tk.StringVar):
+            var.set('')
+
+    def _update_settings_graph_year_options(self, cases: list[dict] | None = None) -> None:
+        if not hasattr(self, 'auto_report_graph_year_combo'):
+            return
+
+        if cases is None:
+            try:
+                cases = get_all_cases_db() or []
+            except Exception as exc:
+                logging.error("Failed to load cases for graph year options: %s", exc)
+                cases = []
+
+        years: set[str] = set()
+        for case in cases:
+            start_date = str(case.get('start_date') or '')
+            if len(start_date) >= 4 and start_date[:4].isdigit():
+                years.add(start_date[:4])
+
+        values = ['All'] + sorted(years, reverse=True)
+        try:
+            self.auto_report_graph_year_combo['values'] = values
+        except Exception:
+            return
+
+        if hasattr(self, 'auto_report_graph_year_var'):
+            current = self.auto_report_graph_year_var.get()
+            if current not in values:
+                self.auto_report_graph_year_var.set('All')
+
+    def _on_auto_report_frequency_change(self, event=None):
+        try:
+            self._update_schedule_frequency_controls()
+        except Exception:
+            logging.debug("Frequency change update failed", exc_info=True)
+
+    def _update_schedule_frequency_controls(self) -> None:
+        freq_display = self.auto_report_frequency_var.get() if hasattr(self, 'auto_report_frequency_var') else 'Weekly'
+        freq_code = self._auto_report_frequency_map.get(freq_display, 'weekly') if hasattr(self, '_auto_report_frequency_map') else 'weekly'
+        weekly_state = 'readonly' if freq_code == 'weekly' else 'disabled'
+        monthly_state = 'readonly' if freq_code == 'monthly' else 'disabled'
+
+        if hasattr(self, 'auto_report_weekday_combo'):
+            try:
+                self.auto_report_weekday_combo.configure(state=weekly_state)
+            except Exception:
+                pass
+        if hasattr(self, 'auto_report_month_day_combo'):
+            try:
+                self.auto_report_month_day_combo.configure(state=monthly_state)
+            except Exception:
+                pass
+
+    def _toggle_auto_report_date_range(self) -> None:
+        """Deprecated helper retained for backward compatibility."""
+        pass
+    def _collect_automated_reports_settings(self):
+        if not hasattr(self, 'auto_report_output_dir_var'):
+            raise ValueError("Automated report controls not initialized")
+
+        existing_config = load_automated_reports_config()
+
+        output_dir = self.auto_report_output_dir_var.get().strip()
+        if not output_dir:
+            raise ValueError("Output folder is required.")
+
+        report_types = [key for key, var in self.auto_report_report_vars.items() if var.get()]
+        if not report_types:
+            raise ValueError("Select at least one report type to generate.")
+
+        freq_display = self.auto_report_frequency_var.get()
+        frequency = self._auto_report_frequency_map.get(freq_display, DEFAULT_AUTOMATED_REPORTS_CONFIG['frequency'])
+
+        try:
+            recent_days = int(self.auto_report_recent_days_var.get())
+        except Exception:
+            recent_days = DEFAULT_AUTOMATED_REPORTS_CONFIG['recent_days']
+        if recent_days < 0:
+            recent_days = 0
+
+        recent_only = bool(self.auto_report_recent_only_var.get())
+
+        config = {
+            "output_dir": output_dir,
+            "report_types": report_types,
+            "frequency": frequency,
+            "recent_only": recent_only,
+            "recent_days": recent_days,
+            "page_size": self.auto_report_page_size_var.get() or DEFAULT_AUTOMATED_REPORTS_CONFIG['page_size'],
+            "orientation": self.auto_report_orientation_var.get() or DEFAULT_AUTOMATED_REPORTS_CONFIG['orientation'],
+            "last_run_iso": existing_config.get("last_run_iso", ""),
+            "next_run_iso": existing_config.get("next_run_iso", ""),
+        }
+
+        if hasattr(self, 'auto_report_weekday_var'):
+            weekday_value = self.auto_report_weekday_var.get()
+            if weekday_value not in WEEKDAY_CHOICES:
+                weekday_value = WEEKDAY_CHOICES[0]
+            config['schedule_weekday'] = weekday_value
+
+        if hasattr(self, 'auto_report_month_day_var'):
+            month_day_value = self.auto_report_month_day_var.get()
+            if month_day_value.lower() in {"last", "last day"}:
+                month_day_value = "Last Day"
+            elif month_day_value not in MONTH_DAY_CHOICES:
+                month_day_value = "1"
+            config['schedule_month_day'] = month_day_value
+
+        label_to_code = getattr(self, '_auto_report_date_range_label_to_code', None)
+        if not isinstance(label_to_code, dict) or not label_to_code:
+            label_to_code = {label: code for code, label in DATE_RANGE_MODE_LABELS.items()}
+        selected_label = self.auto_report_date_range_var.get() if hasattr(self, 'auto_report_date_range_var') else DATE_RANGE_MODE_LABELS[DEFAULT_AUTOMATED_REPORTS_CONFIG['date_range_mode']]
+        mode_code = label_to_code.get(selected_label, DEFAULT_AUTOMATED_REPORTS_CONFIG['date_range_mode'])
+        if mode_code not in DATE_RANGE_MODE_LABELS:
+            mode_code = DEFAULT_AUTOMATED_REPORTS_CONFIG['date_range_mode']
+        config['date_range_mode'] = mode_code
+
+        # Collect graph snapshot settings
+        selected_graph_types: list[str] = [
+            graph_type
+            for graph_type in GRAPH_TYPE_CHOICES
+            if self.auto_report_graph_type_vars.get(graph_type) and self.auto_report_graph_type_vars[graph_type].get()
+        ] if hasattr(self, 'auto_report_graph_type_vars') else []
+
+        if not selected_graph_types:
+            raise ValueError("Select at least one graph type for automated snapshots.")
+
+        graph_year = "All"
+        if hasattr(self, 'auto_report_graph_year_var'):
+            graph_year = (self.auto_report_graph_year_var.get() or "All").strip() or "All"
+
+        include_png_var = getattr(self, 'auto_report_graph_include_png_var', None)
+        include_csv_var = getattr(self, 'auto_report_graph_include_csv_var', None)
+        graph_settings = {
+            "types": selected_graph_types,
+            "year_filter": graph_year,
+            "include_png": bool(include_png_var.get()) if include_png_var else True,
+            "include_csv": bool(include_csv_var.get()) if include_csv_var else True,
+        }
+
+        # Collect map export settings
+        map_completed_var = getattr(self, 'auto_report_map_include_completed_var', None)
+        map_in_progress_var = getattr(self, 'auto_report_map_include_in_progress_var', None)
+        map_details_var = getattr(self, 'auto_report_map_include_case_details_var', None)
+        map_data_var = getattr(self, 'auto_report_map_include_data_var', None)
+        map_settings = {
+            "include_completed": bool(map_completed_var.get()) if map_completed_var else True,
+            "include_in_progress": bool(map_in_progress_var.get()) if map_in_progress_var else True,
+            "include_case_details": bool(map_details_var.get()) if map_details_var else True,
+            "include_data_file": bool(map_data_var.get()) if map_data_var else True,
+        }
+
+        # Collect per-report directory overrides
+        per_type_dirs: dict[str, str] = {}
+        if hasattr(self, 'auto_report_report_dir_vars'):
+            for key, var in self.auto_report_report_dir_vars.items():
+                if not isinstance(var, tk.StringVar):
+                    continue
+                value = var.get().strip()
+                if value:
+                    per_type_dirs[key] = value
+
+        config["graph_settings"] = graph_settings
+        config["map_settings"] = map_settings
+        config["report_output_dirs"] = per_type_dirs
+
+        return config
+
+    def _save_automated_reports_settings(self):
+        try:
+            config = self._collect_automated_reports_settings()
+            os.makedirs(config['output_dir'], exist_ok=True)
+
+            if config['frequency'] == 'manual':
+                config['next_run_iso'] = ""
+            else:
+                last_run = _parse_iso_datetime(config.get('last_run_iso'))
+                schedule_opts = {
+                    "weekday": config.get('schedule_weekday'),
+                    "month_day": config.get('schedule_month_day'),
+                }
+                next_run = _calculate_next_automation_run(config['frequency'], last_run, datetime.now(), schedule_opts)
+                config['next_run_iso'] = _format_iso(next_run) if next_run else ""
+
+            save_automated_reports_config(config)
+        except Exception as exc:
+            logging.error("Failed to save automated report settings: %s", exc)
+            Messagebox.show_error("Automated Reports", str(exc))
+            return
+
+        self._refresh_automation_status_label(config)
+        self._start_automation_scheduler()
+        Messagebox.show_info("Automated Reports", "Settings saved successfully.")
+
+    def _run_automated_reports_now(self):
+        try:
+            config = self._collect_automated_reports_settings()
+            os.makedirs(config['output_dir'], exist_ok=True)
+            save_automated_reports_config(config)
+        except Exception as exc:
+            logging.error("Automated run setup failed: %s", exc)
+            Messagebox.show_error("Automated Reports", str(exc))
+            return
+
+        try:
+            generated = run_automated_exports(
+                output_dir=config['output_dir'],
+                include_recent_days=config['recent_days'],
+                page_size=config['page_size'],
+                orientation=config['orientation'],
+                report_types=config['report_types'],
+                recent_only=config['recent_only'],
+            )
+        except Exception as exc:
+            logging.error("Automated export run failed: %s", exc)
+            Messagebox.show_error("Automated Reports", f"Automated export failed.\n\n{exc}")
+            return
+
+        run_timestamp = datetime.now()
+        updated_config = load_automated_reports_config()
+        updated_config['last_run_iso'] = _format_iso(run_timestamp)
+        freq_value = str(updated_config.get('frequency') or 'manual')
+        if freq_value.lower() == 'manual':
+            updated_config['next_run_iso'] = ""
+        else:
+            schedule_opts = {
+                "weekday": updated_config.get('schedule_weekday'),
+                "month_day": updated_config.get('schedule_month_day'),
+            }
+            next_run = _calculate_next_automation_run(freq_value, run_timestamp, run_timestamp, schedule_opts)
+            updated_config['next_run_iso'] = _format_iso(next_run) if next_run else ""
+        save_automated_reports_config(updated_config)
+        self._refresh_automation_status_label(updated_config)
+        self._start_automation_scheduler()
+
+        message = [f"Generated {len(generated)} file(s).", f"Output folder:\n{config['output_dir']}"]
+        Messagebox.show_info("Automated Reports", "\n\n".join(message))
+
+    def _refresh_automation_status_label(self, config: dict | None = None) -> None:
+        status_var = getattr(self, 'auto_report_status_var', None)
+        if not isinstance(status_var, tk.StringVar):
+            return
+
+        if config is None:
+            try:
+                config = load_automated_reports_config()
+            except Exception as exc:
+                logging.error("Failed to load automation config for status label: %s", exc)
+                config = DEFAULT_AUTOMATED_REPORTS_CONFIG.copy()
+
+        freq_value = str(config.get('frequency') or 'manual')
+        freq_lower = freq_value.lower()
+        last_run_dt = _parse_iso_datetime(config.get('last_run_iso'))
+        next_run_dt = _parse_iso_datetime(config.get('next_run_iso'))
+
+        if freq_lower == 'manual':
+            message = "Automation disabled. Frequency set to Manual."
+        else:
+            parts: list[str] = []
+            if next_run_dt:
+                parts.append(f"Next run {next_run_dt.strftime('%b %d, %Y %I:%M %p')}")
+            else:
+                parts.append("Next run not scheduled")
+            if last_run_dt:
+                parts.append(f"Last run {last_run_dt.strftime('%b %d, %Y %I:%M %p')}")
+            else:
+                parts.append("No previous runs")
+            message = f"{freq_value.capitalize()} schedule active: " + " • ".join(parts)
+
+        try:
+            status_var.set(message)
+        except Exception:
+            pass
+
+    def _start_automation_scheduler(self) -> None:
+        if not getattr(self, 'root', None):
+            return
+
+        if self._automation_after_id:
+            try:
+                self.root.after_cancel(self._automation_after_id)
+            except Exception:
+                pass
+            self._automation_after_id = None
+
+        self._automation_running = True
+        self._automation_scheduler_tick()
+
+    def _stop_automation_scheduler(self) -> None:
+        self._automation_running = False
+        if self._automation_after_id and getattr(self, 'root', None):
+            try:
+                self.root.after_cancel(self._automation_after_id)
+            except Exception:
+                pass
+            self._automation_after_id = None
+
+    def _schedule_next_automation_tick(self) -> None:
+        if not self._automation_running or not getattr(self, 'root', None):
+            return
+
+        try:
+            self._automation_after_id = self.root.after(AUTOMATION_POLL_INTERVAL_MS, self._automation_scheduler_tick)
+        except Exception as exc:
+            logging.debug("Unable to schedule automation tick: %s", exc)
+            self._automation_after_id = None
+
+    def _automation_scheduler_tick(self) -> None:
+        if not self._automation_running:
+            return
+
+        self._automation_after_id = None
+        try:
+            config = load_automated_reports_config()
+        except Exception as exc:
+            logging.error("Automation scheduler could not load config: %s", exc)
+            self._schedule_next_automation_tick()
+            return
+
+        freq_value = str(config.get('frequency') or 'manual')
+        freq_lower = freq_value.lower()
+        if freq_lower == 'manual':
+            self._automation_running = False
+            self._refresh_automation_status_label(config)
+            return
+
+        now = datetime.now()
+        last_run_dt = _parse_iso_datetime(config.get('last_run_iso'))
+        next_run_dt = _parse_iso_datetime(config.get('next_run_iso'))
+        schedule_opts = {
+            "weekday": config.get('schedule_weekday'),
+            "month_day": config.get('schedule_month_day'),
+        }
+
+        if not next_run_dt:
+            next_run_dt = _calculate_next_automation_run(freq_lower, last_run_dt, now, schedule_opts)
+            config['next_run_iso'] = _format_iso(next_run_dt) if next_run_dt else ""
+            try:
+                save_automated_reports_config(config)
+            except Exception as exc:
+                logging.error("Failed to persist automation schedule metadata: %s", exc)
+            self._refresh_automation_status_label(config)
+
+        if next_run_dt and next_run_dt <= now:
+            if self._automation_worker_thread and self._automation_worker_thread.is_alive():
+                logging.debug("Automation run already in progress; skipping trigger.")
+            else:
+                self._automation_worker_thread = threading.Thread(target=self._run_scheduled_exports, daemon=True)
+                self._automation_worker_thread.start()
+
+        self._schedule_next_automation_tick()
+
+    def _run_scheduled_exports(self) -> None:
+        logging.info("Automation scheduler triggered run.")
+        success = False
+        error_message: str | None = None
+        try:
+            run_automated_exports()
+            success = True
+        except Exception as exc:
+            error_message = str(exc)
+            logging.error("Scheduled automated exports failed: %s", exc)
+
+        finished_at = datetime.now()
+        try:
+            config = load_automated_reports_config()
+        except Exception as exc:
+            logging.error("Unable to load config after scheduled run: %s", exc)
+            config = DEFAULT_AUTOMATED_REPORTS_CONFIG.copy()
+
+        freq_value = str(config.get('frequency') or 'manual')
+        freq_lower = freq_value.lower()
+        if success:
+            config['last_run_iso'] = _format_iso(finished_at)
+        schedule_opts = {
+            "weekday": config.get('schedule_weekday'),
+            "month_day": config.get('schedule_month_day'),
+        }
+
+        if freq_lower == 'manual':
+            config['next_run_iso'] = ""
+        else:
+            last_run_dt = finished_at if success else _parse_iso_datetime(config.get('last_run_iso'))
+            if last_run_dt is None:
+                last_run_dt = finished_at
+            next_run_dt = _calculate_next_automation_run(freq_lower, last_run_dt, finished_at, schedule_opts)
+            if next_run_dt and next_run_dt <= finished_at:
+                next_run_dt = _calculate_next_automation_run(freq_lower, finished_at, finished_at, schedule_opts)
+            config['next_run_iso'] = _format_iso(next_run_dt) if next_run_dt else ""
+
+        try:
+            save_automated_reports_config(config)
+        except Exception as exc:
+            logging.error("Failed to persist automation metadata after run: %s", exc)
+
+        def _notify_main_thread() -> None:
+            self._automation_worker_thread = None
+            self._refresh_automation_status_label(config)
+            if success:
+                self.update_status("Automated reports generated.")
+            else:
+                self.update_status("Automated report run failed.")
+                if error_message:
+                    Messagebox.show_error("Automated Reports", f"Scheduled run failed.\n\n{error_message}")
+            if self._automation_running:
+                self._start_automation_scheduler()
+
+        try:
+            self.root.after(0, _notify_main_thread)
+        except Exception:
+            pass
 
     def submit_case(self):
         """Collects data from the entry form and either adds a new case or updates an existing one."""
@@ -6125,7 +7812,7 @@ class CaseLogApp:
                 self.update_status(f"Failed to submit case '{case_number}'.")
 
         # Before/after adding the case, update combo values for persistent fields
-        for key in ["examiner", "investigator", "agency", "offense_type", "city_of_offense", "forensic_tool"]:
+        for key in ["examiner", "investigator", "agency", "offense_type", "city_of_offense"]:
             if key in self.entries and isinstance(self.entries[key], tk.StringVar):
                 value = self.entries[key].get().strip()
                 if value:
@@ -6194,7 +7881,7 @@ class CaseLogApp:
                 self.update_status(f"Failed to submit in-progress case '{case_number}'.")
 
         # Update combo values for persistent fields
-        for key in ["examiner", "investigator", "agency", "offense_type", "city_of_offense", "forensic_tool"]:
+        for key in ["examiner", "investigator", "agency", "offense_type", "city_of_offense"]:
             if key in self.entries and isinstance(self.entries[key], tk.StringVar):
                 value = self.entries[key].get().strip()
                 if value:
@@ -7892,19 +9579,17 @@ class CaseLogApp:
     def populate_graph_filters(self):
         """Populates the graph filters (year dropdown) with available years from the data."""
         try:
-            # Get all cases (completed and in-progress)
+            # Get all cases
             cases = get_all_cases_db()
-            in_progress_cases = get_all_in_progress_cases_db()
-
+            
             # Extract unique years from start_date
             years = set()
-            for dataset in (cases, in_progress_cases):
-                for case in dataset:
-                    start_date = case.get('start_date', '')
-                    if start_date and len(start_date) >= 4:
-                        year = start_date[:4]
-                        if year.isdigit():
-                            years.add(year)
+            for case in cases:
+                start_date = case.get('start_date', '')
+                if start_date and len(start_date) >= 4:  # Ensure we have at least YYYY
+                    year = start_date[:4]
+                    if year.isdigit():  # Ensure it's a valid year
+                        years.add(year)
             
             # Sort years in descending order
             sorted_years = sorted(years, reverse=True)
@@ -7918,6 +9603,10 @@ class CaseLogApp:
                 if current not in values:
                     self.graph_year_var.set("All")
             
+            # Update automated settings year options using same data set
+            if hasattr(self, 'auto_report_graph_year_combo'):
+                self._update_settings_graph_year_options(cases)
+
             # Update the graph with new filters
             self.update_graph()
             
@@ -7996,7 +9685,38 @@ class CaseLogApp:
             Messagebox.show_error("Restore Failed", f"Restore encountered an error. See log for details.\n\n{e}")
 
 if __name__ == "__main__":
-    # Initialize the database
+    parser = argparse.ArgumentParser(description=APP_NAME)
+    parser.add_argument("--run-automated-exports", action="store_true", help="Generate configured reports without launching the GUI.")
+    parser.add_argument("--output-dir", help="Override the output directory for automated exports.")
+    parser.add_argument("--report-types", nargs="+", choices=list(AUTOMATED_REPORT_TYPES.keys()), help="Report types to generate (default: saved settings).")
+    parser.add_argument("--recent-days", type=int, help="Override the recent days window for total summaries.")
+    parser.add_argument("--recent-only", action="store_true", help="Limit total summaries to the recent-days window.")
+    parser.add_argument("--page-size", choices=["Letter", "Legal", "A4"], help="Override PDF page size for automated reports.")
+    parser.add_argument("--orientation", choices=["Auto", "Portrait", "Landscape"], help="Override PDF orientation for automated reports.")
+    args = parser.parse_args()
+
+    if args.run_automated_exports:
+        init_db()
+        recent_only_override = True if args.recent_only else None
+        try:
+            generated = run_automated_exports(
+                output_dir=args.output_dir,
+                include_recent_days=args.recent_days,
+                page_size=args.page_size,
+                orientation=args.orientation,
+                report_types=args.report_types,
+                recent_only=recent_only_override,
+            )
+        except Exception as exc:
+            logging.error("Automated exports failed: %s", exc)
+            print(f"Automated exports failed: {exc}")
+            sys.exit(1)
+
+        for path in generated:
+            print(path)
+        sys.exit(0)
+
+    # Initialize the database for GUI usage
     init_db()
 
     # Create the main window with the specified theme
