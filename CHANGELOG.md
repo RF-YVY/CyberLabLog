@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.1] - 2025-11-19
+- Added scoped Total Case Summary automation option that mirrors the All Cases PDF layout and highlights the selected date range.
+- Introduced a graph export toggle so weekly/monthly runs can optionally limit charts to the active date scope.
+- Defaulted automated graphs to full-history datasets to prevent duplicate chart sets when scoping reports.
+- Updated in-app version metadata and prepared the 3.0.1 distribution build.
+
 ## [3.0.0] - 2025-11-18
 - Introduced automated reporting with configurable schedules and date scopes (week, month, or all cases).
 - Added dual-scope graph exports so each run produces full-history and date-filtered charts with clear filenames.
