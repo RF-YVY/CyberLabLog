@@ -2,7 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
--## [3.0.2] - 2025-11-25
+## [3.0.2.1] - 2025-11-25
+- Enlarged the inline editor in View Data so case notes and other fields stay visible while you type.
+- Hardened treeview scrolling callbacks to prevent Tcl errors when the widget receives non-numeric commands.
+- Limited completed-case updates to safe columns to eliminate priority-field database errors.
+- Updated in-app version metadata and prepared the 3.0.2.1 distribution build.
+
+## [3.0.2] - 2025-11-25
 - Restored the Forensic Tool field to New Case Entry with editable combo defaults for Cellebrite and Graykey plus live persistence.
 - Extended database tables, reports, exports, and views to capture and display forensic tool usage, including a dedicated graph filter.
 - Documented the new column in import guidance and refreshed user-facing version strings ahead of the 3.0.2 build.

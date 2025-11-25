@@ -60,7 +60,7 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 import pandas as pd
 # --- App Constants & Paths ---
 APP_NAME = "CyberLab Case Tracker"
-APP_VERSION = "3.0.2"  # Increment before each build
+APP_VERSION = "3.0.2.1"  # Increment before each build
 RELEASE_DATE = "Nov 25, 2025"  # Update before each build
 # Determine a persistent base directory:
 # - When frozen by PyInstaller (--onefile), use the folder containing the executable
@@ -79,6 +79,26 @@ MARKER_ICON_FILENAME = os.path.join(DATA_DIR, 'marker_icon.png')
 ICON_FILENAME = os.path.join(BASE_DIR, 'digital.ico')
 BACKUP_DIR = os.path.join(DATA_DIR, 'backups')
 DEFAULT_PASSWORD = "password"
+
+CASE_LOG_MUTABLE_FIELDS = {
+    "case_number",
+    "examiner",
+    "investigator",
+    "agency",
+    "city_of_offense",
+    "state_of_offense",
+    "start_date",
+    "end_date",
+    "volume_size_gb",
+    "offense_type",
+    "device_type",
+    "model",
+    "os",
+    "forensic_tool",
+    "data_recovered",
+    "fpr_complete",
+    "notes",
+}
 
 # Ensure persistent data directories exist early (for images, logs, backups)
 try:
@@ -864,7 +884,7 @@ def update_case_db(case_id, case_data):
                 pass
             cursor = conn.cursor()
 
-            fields_to_update = [field for field in case_data.keys() if field not in ['id', 'created_at']]
+            fields_to_update = [field for field in case_data.keys() if field in CASE_LOG_MUTABLE_FIELDS]
             set_clause = ', '.join([f'{field} = ?' for field in fields_to_update])
             if not set_clause:
                 logging.warning(f"No valid fields to update for case ID {case_id}.")
@@ -5740,7 +5760,18 @@ class CaseLogApp:
         # Bind vertical scrollbar to lazy loading
         def on_vsb(*args):
             self.on_treeview_scroll(*args)
-            vsb.set(*args)
+            try:
+                if len(args) == 2:
+                    first = float(args[0])
+                    last = float(args[1])
+                    vsb.set(first, last)
+                else:
+                    vsb.set(*self.tree.yview())
+            except Exception:
+                try:
+                    vsb.set(*self.tree.yview())
+                except Exception:
+                    pass
         vsb.config(command=on_vsb)
         self.tree.bind("<MouseWheel>", lambda e: self.on_treeview_scroll("scroll", int(-1*(e.delta/120)), "units"))
 
@@ -6163,7 +6194,10 @@ class CaseLogApp:
         # Choose editor type by column
         editor = ttk.Entry(self.tree)
         editor.insert(0, str(old_value))
-        editor.place(x=x, y=y, width=w, height=h)
+        # Ensure inline editor is large enough to view and edit longer content comfortably
+        available_width = max(0, self.tree.winfo_width() - x - 8)
+        max_width = max(w, min(available_width, 320))
+        editor.place(x=x, y=y, width=max_width, height=max(h, 26))
         editor.focus_set()
 
         meta = {'item': item, 'col_key': col_key, 'old': old_value, 'widget': editor}
