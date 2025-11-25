@@ -60,8 +60,8 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 import pandas as pd
 # --- App Constants & Paths ---
 APP_NAME = "CyberLab Case Tracker"
-APP_VERSION = "3.0"  # Increment before each build
-RELEASE_DATE = "Nov 18, 2025"  # Update before each build
+APP_VERSION = "3.0.2"  # Increment before each build
+RELEASE_DATE = "Nov 25, 2025"  # Update before each build
 # Determine a persistent base directory:
 # - When frozen by PyInstaller (--onefile), use the folder containing the executable
 #   so data (DB, app_data) persists across runs.
@@ -259,6 +259,7 @@ def init_db():
                 agency TEXT,
                 model TEXT,
                 os TEXT,
+                forensic_tool TEXT,
                 data_recovered TEXT,
                 fpr_complete INTEGER,
                 notes TEXT,
@@ -311,6 +312,7 @@ def init_db():
                 agency TEXT,
                 model TEXT,
                 os TEXT,
+                forensic_tool TEXT,
                 data_recovered TEXT,
                 fpr_complete INTEGER,
                 notes TEXT,
@@ -349,6 +351,17 @@ def init_db():
         except sqlite3.OperationalError:
             pass  # Column already exists
 
+        try:
+            cursor.execute("ALTER TABLE case_log ADD COLUMN forensic_tool TEXT")
+            logging.info("Added forensic_tool column to case_log table.")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        try:
+            cursor.execute("ALTER TABLE in_progress_cases ADD COLUMN forensic_tool TEXT")
+            logging.info("Added forensic_tool column to in_progress_cases table.")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
         conn.commit()
         # Create helpful indexes for common filters/queries (safe if already exist)
         try:
@@ -524,8 +537,8 @@ def add_case_db(case_data):
             INSERT INTO case_log (
                 case_number, examiner, investigator, agency, city_of_offense, state_of_offense,
                 start_date, end_date, volume_size_gb, offense_type, device_type, model, os,
-                data_recovered, fpr_complete, notes, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                forensic_tool, data_recovered, fpr_complete, notes, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             str(case_data.get("case_number")).strip() if case_data.get("case_number") is not None else None,
             case_data.get("examiner"),
@@ -540,6 +553,7 @@ def add_case_db(case_data):
             case_data.get("device_type"),
             case_data.get("model"),
             case_data.get("os"),
+            case_data.get("forensic_tool"),
             dr_str,
             fpr_int,
             case_data.get("notes"),
@@ -588,8 +602,8 @@ def add_in_progress_case_db(case_data):
             INSERT INTO in_progress_cases (
                 case_number, examiner, investigator, agency, city_of_offense, state_of_offense,
                 start_date, end_date, volume_size_gb, offense_type, device_type, model, os,
-                data_recovered, fpr_complete, notes, created_at, priority, target_due_date, workflow_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                forensic_tool, data_recovered, fpr_complete, notes, created_at, priority, target_due_date, workflow_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             str(case_data.get("case_number")).strip() if case_data.get("case_number") is not None else None,
             case_data.get("examiner"),
@@ -604,6 +618,7 @@ def add_in_progress_case_db(case_data):
             case_data.get("device_type"),
             case_data.get("model"),
             case_data.get("os"),
+            case_data.get("forensic_tool"),
             dr_str,
             fpr_int,
             case_data.get("notes"),
@@ -730,7 +745,7 @@ def move_case_to_completed(case_id: int) -> bool:
             SELECT case_number, examiner, investigator, agency,
                    city_of_offense, state_of_offense,
                    start_date, end_date, volume_size_gb,
-                   offense_type, device_type, model, os,
+                   offense_type, device_type, model, os, forensic_tool,
                    data_recovered, fpr_complete, notes, created_at
             FROM in_progress_cases WHERE id = ?
             """,
@@ -745,9 +760,9 @@ def move_case_to_completed(case_id: int) -> bool:
             """
             INSERT INTO case_log (
                 case_number, examiner, investigator, agency, city_of_offense, state_of_offense,
-                start_date, end_date, volume_size_gb, offense_type, device_type, model, os,
+                start_date, end_date, volume_size_gb, offense_type, device_type, model, os, forensic_tool,
                 data_recovered, fpr_complete, notes, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             tuple(row),
         )
@@ -1116,6 +1131,7 @@ GRAPH_TYPE_CHOICES = [
     "State of Offense",
     "Examiner",
     "Investigator",
+    "Forensic Tool",
     "Year",
     "City of Offense",
     "Total Volume (GB/TB)",
@@ -1139,6 +1155,7 @@ DEFAULT_GRAPH_EXPORT_SETTINGS = {
     "year_filter": "All",
     "include_png": True,
     "include_csv": True,
+    "use_date_scope": False,
 }
 
 DEFAULT_MAP_EXPORT_SETTINGS = {
@@ -1165,6 +1182,7 @@ MONTH_DAY_CHOICES = [str(i) for i in range(1, 32)] + ["Last Day"]
 
 AUTOMATED_REPORT_TYPES = {
     "total_summary_pdf": "Total Case Summary (PDF)",
+    "total_summary_pdf_scope": "Date Scope Cases Summary (PDF)",
     "total_summary_xlsx": "Total Case Summary (Excel)",
     "all_cases_pdf": "All Cases Summary (PDF)",
     "graphs_snapshot": "Graph Snapshots (PNG/CSV)",
@@ -1173,11 +1191,14 @@ AUTOMATED_REPORT_TYPES = {
 
 REPORT_TYPE_DEFAULT_SUBDIRS = {
     "total_summary_pdf": "",
+    "total_summary_pdf_scope": "",
     "total_summary_xlsx": "",
     "all_cases_pdf": "",
     "graphs_snapshot": "graphs",
     "map_html": "map",
 }
+
+SCOPE_LIMITED_REPORT_TYPES = {"total_summary_pdf_scope"}
 
 
 DATE_RANGE_MODE_LABELS = {
@@ -1497,6 +1518,10 @@ def generate_total_case_summary_pdf(
         f"Division: {header.get('Division', '')}",
         f"Date: {header.get('Date', datetime.now().strftime('%Y-%m-%d'))}",
     ]
+    if start_date or end_date:
+        start_display = start_date or "Start"
+        end_display = end_date or "Present"
+        header_lines.append(f"Date Range: {start_display} to {end_display}")
     header_table = Table([[Paragraph(line, styles["Normal"])] for line in header_lines], hAlign='LEFT')
     elements.append(header_table)
     elements.append(Spacer(1, 12))
@@ -1874,6 +1899,9 @@ def generate_all_cases_summary_pdf(
     filename,
     page_size="Letter",
     orientation="Auto",
+    start_date: str | None = None,
+    end_date: str | None = None,
+    title_override: str | None = None,
 ):
     """Create the All Cases Summary PDF that mirrors the interactive export."""
     from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
@@ -1911,13 +1939,17 @@ def generate_all_cases_summary_pdf(
         f"Division: {header.get('Division', '')}",
         f"Date: {header.get('Date', datetime.now().strftime('%Y-%m-%d'))}",
     ]
+    if start_date or end_date:
+        start_display = (start_date or "Start").strip() or "Start"
+        end_display = (end_date or "Present").strip() or "Present"
+        header_lines.append(f"Date Range: {start_display} to {end_display}")
     header_table = Table([[Paragraph(line, styles["Normal"])] for line in header_lines])
     elements.append(header_table)
     elements.append(Spacer(1, 10))
 
     try:
-        title = "All Cases Summary"
-        title_para = Paragraph(f"<b>{title}</b>", styles["Title"])
+        title_text = title_override or "All Cases Summary"
+        title_para = Paragraph(f"<b>{title_text}</b>", styles["Title"])
         if os.path.exists(LOGO_FILENAME):
             logo_width = 1.1 * inch
             img = RLImage(LOGO_FILENAME, width=logo_width, height=logo_width)
@@ -2203,6 +2235,27 @@ def run_automated_exports(
         )
         generated_files.append(pdf_total_path)
 
+    if "total_summary_pdf_scope" in report_types:
+        if not (range_start_dt or range_end_dt):
+            logging.info("Skipping scoped total case summary; date range mode is 'all'.")
+        else:
+            scope_dir = _resolve_output_dir("total_summary_pdf_scope")
+            _remove_matching_files(scope_dir, ["date_scope_cases_summary_*.pdf"])
+            scope_suffix = range_mode if range_mode else "range"
+            pdf_scope_path = os.path.join(scope_dir, f"date_scope_cases_summary_{scope_suffix}_{timestamp}.pdf")
+            generate_all_cases_summary_pdf(
+                completed_cases=completed_cases,
+                in_progress_cases=in_progress_cases,
+                header_info=header_info,
+                filename=pdf_scope_path,
+                page_size=page_size,
+                orientation=orientation,
+                start_date=range_start_str,
+                end_date=range_end_str,
+                title_override="Date Scope Cases Summary",
+            )
+            generated_files.append(pdf_scope_path)
+
     if "total_summary_xlsx" in report_types:
         xlsx_dir = _resolve_output_dir("total_summary_xlsx")
         _remove_matching_files(xlsx_dir, ["total_case_summary_*.xlsx"])
@@ -2222,8 +2275,8 @@ def run_automated_exports(
         _remove_matching_files(all_cases_dir, ["all_cases_summary_*.pdf"])
         pdf_all_cases_path = os.path.join(all_cases_dir, f"all_cases_summary_{timestamp}.pdf")
         generate_all_cases_summary_pdf(
-            completed_cases=completed_cases,
-            in_progress_cases=in_progress_cases,
+            completed_cases=completed_cases_all,  # Always include the complete dataset for this report
+            in_progress_cases=in_progress_cases_all,
             header_info=header_info,
             filename=pdf_all_cases_path,
             page_size=page_size,
@@ -2236,12 +2289,12 @@ def run_automated_exports(
         _remove_matching_files(graphs_dir, ["*.png", "*.csv"])
         graph_settings = config.get("graph_settings") or DEFAULT_GRAPH_EXPORT_SETTINGS
         graph_scopes: list[tuple[str, list[dict]]]
-        graph_scopes = [("All Cases", completed_cases_all)]
-        range_label = DATE_RANGE_MODE_LABELS.get(range_mode, "Selected Range")
-        if range_start_dt or range_end_dt:
-            graph_scopes.append((range_label, completed_cases))
-        elif range_mode != "all":
-            graph_scopes.append((range_label, completed_cases))
+        use_scope = bool(graph_settings.get("use_date_scope"))
+        if not use_scope or not (range_start_dt or range_end_dt):
+            graph_scopes = [("All Cases", completed_cases_all)]
+        else:
+            range_label = DATE_RANGE_MODE_LABELS.get(range_mode, "Selected Range")
+            graph_scopes = [(range_label, completed_cases)]
 
         for scope_label, scope_cases in graph_scopes:
             generated_files.extend(
@@ -2314,6 +2367,7 @@ GRAPH_FIELD_MAP = {
     "State of Offense": "state_of_offense",
     "Examiner": "examiner",
     "Investigator": "investigator",
+    "Forensic Tool": "forensic_tool",
     "Year": "start_date",
     "City of Offense": "city_of_offense",
 }
@@ -2334,15 +2388,45 @@ def _filter_cases_by_year(cases: list[dict], year_filter: str | None) -> list[di
 
 
 def _case_date_for_range(case: dict) -> datetime | None:
+    """Resolve a usable datetime from stored case date fields."""
     for key in ("start_date", "created_at"):
         raw = case.get(key)
         if not raw:
             continue
-        text = str(raw)
-        for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%m/%d/%Y", "%m-%d-%Y"):
+
+        if isinstance(raw, datetime):
+            return raw
+        if isinstance(raw, datetime_date):
+            return datetime.combine(raw, datetime.min.time())
+
+        text = str(raw).strip()
+        if not text:
+            continue
+
+        # Normalise common separators and trim trailing timezone markers/fractions.
+        normalized = text.replace("T", " ").rstrip("Z").strip()
+        if "." in normalized:
+            normalized = normalized.split(".", 1)[0]
+
+        try:
+            return datetime.fromisoformat(normalized)
+        except ValueError:
+            pass
+
+        for fmt in (
+            "%Y-%m-%d",
+            "%Y-%m-%d %H:%M",
+            "%Y-%m-%d %H:%M:%S",
+            "%m/%d/%Y",
+            "%m/%d/%Y %H:%M",
+            "%m/%d/%Y %H:%M:%S",
+            "%m-%d-%Y",
+            "%m-%d-%Y %H:%M",
+            "%m-%d-%Y %H:%M:%S",
+        ):
             try:
-                return datetime.strptime(text[:len(fmt)], fmt)
-            except Exception:
+                return datetime.strptime(normalized, fmt)
+            except ValueError:
                 continue
     return None
 
@@ -3024,6 +3108,7 @@ class CaseLogApp:
             'device_type': {'text': 'Device Type', 'width': 100},
             'model': {'text': 'Model', 'width': 100},
             'os': {'text': 'OS', 'width': 80},
+            'forensic_tool': {'text': 'Forensic Tool', 'width': 120},
             'data_recovered': {'text': 'Data Recovered?', 'width': 120},
             'fpr_complete': {'text': 'FPR Complete?', 'width': 120},
             'notes': {'text': 'Notes', 'width': 200},
@@ -3174,7 +3259,7 @@ class CaseLogApp:
             self._combo_registry = {}
         # Keys whose options are user-managed
         self._editable_combo_keys = [
-            "examiner", "investigator", "agency", "offense_type", "city_of_offense"
+            "examiner", "investigator", "agency", "offense_type", "city_of_offense", "forensic_tool"
         ]
 
     def _register_editable_combo(self, key: str, combo: ttk.Combobox, var: tk.StringVar):
@@ -3235,10 +3320,20 @@ class CaseLogApp:
             derived = get_unique_field_values(key) or []
         except Exception:
             pass
+        base_defaults = {
+            "forensic_tool": ["", "Cellebrite", "Graykey"],
+        }
+        raw_values: list[str] = []
         try:
-            merged = sorted({v for v in (persisted + derived) if isinstance(v, str)})
+            raw_values.extend(base_defaults.get(key, []))
         except Exception:
-            merged = persisted or derived or []
+            pass
+        raw_values.extend(v for v in persisted if isinstance(v, str))
+        raw_values.extend(v for v in derived if isinstance(v, str))
+        try:
+            merged = sorted({v.strip() if isinstance(v, str) else v for v in raw_values if isinstance(v, str)})
+        except Exception:
+            merged = raw_values or []
         # Persist back if registry exists (first run hydration)
         try:
             set_combo_values_db(key, merged)
@@ -5149,14 +5244,14 @@ class CaseLogApp:
             "When importing from Excel, include these columns (exact, case-sensitive):\n"
             "- ID (optional) | Case # | Examiner | Investigator | Agency | City | State |\n"
             "  Start (MM-DD-YYYY) | End (MM-DD-YYYY) | Vol (GB) | Offense | Device | Model | OS |\n"
-            "  Recovered? | FPR? | Notes | Created (YYYY-MM-DD)\n\n"
+            "  Forensic Tool | Recovered? | FPR? | Notes | Created (YYYY-MM-DD)\n\n"
             "Data Storage:\n"
             "- All case data is stored locally in a SQLite database (caselog_gui_v6.db).\n"
             "- User preferences and settings are stored in the app_data directory.\n\n"
             "Support & Documentation:\n"
             "- For help or updates, contact your system administrator or the application provider.\n"
             "- This tool is for internal use by digital forensics labs and law enforcement.\n\n"
-            f"Version: {APP_VERSION} ({RELEASE_DATE})\n"
+            f"Version: v{APP_VERSION} ({RELEASE_DATE})\n"
             f"Data Directory: {DATA_DIR}\n"
             f"Database File: {DB_FILENAME}\n"
             f"Log File: {LOG_FILENAME}\n\n"
@@ -5264,7 +5359,8 @@ class CaseLogApp:
             ("State of Offense", "state_of_offense", "combo", US_STATE_ABBREVIATIONS), # Added State here
             ("Device Type", "device_type", "combo", ["", "iOS", "Android", "ChromeOS", "Windows", "SD", "HDD", "SDD", "USB", "SW Return", "Zip file", "drone", "other"]),
             ("Model", "model", "entry"),
-            ("OS", "os", "entry")
+            ("OS", "os", "entry"),
+            ("Forensic Tool", "forensic_tool", "combo", [])
         ]
 
         current_row = 0 # Initialize row counter for grid layout
@@ -5286,7 +5382,7 @@ class CaseLogApp:
             elif field_type == "combo":
                 var = tk.StringVar()
                 # Load persistent values for editable combos
-                if key in ["examiner", "investigator", "agency", "offense_type", "city_of_offense"]:
+                if key in ["examiner", "investigator", "agency", "offense_type", "city_of_offense", "forensic_tool"]:
                     # Merge persisted + derived values for first render
                     combo_values = self._get_initial_combo_values(key)
                 else:
@@ -5304,7 +5400,7 @@ class CaseLogApp:
                     var.set(combo_values[0])
 
                 # --- Add dynamic entry + context menu for editable combos ---
-                if key in ["examiner", "investigator", "agency", "offense_type", "city_of_offense"]:
+                if key in ["examiner", "investigator", "agency", "offense_type", "city_of_offense", "forensic_tool"]:
                     # Ensure registry exists
                     if not hasattr(self, '_combo_registry'):
                         self._init_combo_registry()
@@ -5390,7 +5486,11 @@ class CaseLogApp:
         # --- Notes field ---
         # Place notes field after the Phase 1 fields
         notes_row = phase1_row + 1  # Place notes below Phase 1 fields
-        notes_frame = tb.LabelFrame(self.field_frame_container, text="Notes", padding="5") # Parent is field_frame_container
+        notes_frame = ttk.LabelFrame(self.field_frame_container, text="Notes")  # Parent is field_frame_container
+        try:
+            notes_frame.configure(padding=5)
+        except Exception:
+            pass
         notes_frame.grid(row=notes_row, column=0, columnspan=2, sticky='ewns', padx=5, pady=(10,5))
         self.field_frame_container.grid_rowconfigure(notes_row, weight=1) # Allow notes field to expand vertically
 
@@ -5452,7 +5552,7 @@ class CaseLogApp:
         # After all widgets are created in create_entry_widgets: live-repopulate editable combos
         if not hasattr(self, '_combo_registry'):
             self._init_combo_registry()
-        for key in ["examiner", "investigator", "agency", "offense_type", "city_of_offense"]:
+        for key in ["examiner", "investigator", "agency", "offense_type", "city_of_offense", "forensic_tool"]:
             try:
                 self._refresh_registered_combos(key, get_combo_values_db(key))
             except Exception:
@@ -5611,6 +5711,7 @@ class CaseLogApp:
             "device_type": {"text": "Device", "width": 100},
             "model": {"text": "Model", "width": 100},
             "os": {"text": "OS", "width": 80},
+            "forensic_tool": {"text": "Forensic Tool", "width": 120},
             "data_recovered": {"text": "Recovered?", "width": 70}, # Keep text, will display Yes/No
             "fpr_complete": {"text": "FPR?", "width": 50, "type": "boolean"},
             "created_at": {"text": "Created (MM-DD-YYYY)", "width": 100, "type": "date"},
@@ -7067,12 +7168,16 @@ class CaseLogApp:
         reports_frame.columnconfigure(1, weight=1)
 
         self.auto_report_report_vars = {}
+        self.auto_report_report_checks: dict[str, ttk.Checkbutton] = {}
+        self._auto_report_disabled_reports: set[str] = set()
+        self._auto_report_saved_report_states: dict[str, bool] = {}
         selected_types = set(config.get('report_types', DEFAULT_AUTOMATED_REPORTS_CONFIG['report_types']))
         for idx, (key, label) in enumerate(AUTOMATED_REPORT_TYPES.items()):
             var = tk.BooleanVar(value=key in selected_types)
             chk = ttk.Checkbutton(reports_frame, text=label, variable=var)
             chk.grid(row=idx // 2, column=idx % 2, sticky='w', padx=8, pady=4)
             self.auto_report_report_vars[key] = var
+            self.auto_report_report_checks[key] = chk
 
         checkbox_rows = (len(AUTOMATED_REPORT_TYPES) + 1) // 2
         ttk.Separator(reports_frame).grid(row=checkbox_rows, column=0, columnspan=2, sticky='ew', padx=8, pady=(8, 4))
@@ -7093,6 +7198,7 @@ class CaseLogApp:
             width=20,
         )
         date_scope_combo.grid(row=checkbox_rows + 1, column=1, sticky='w', padx=8, pady=(4, 2))
+        date_scope_combo.bind("<<ComboboxSelected>>", self._on_auto_report_date_scope_change)
         scope_hint = ttk.Label(reports_frame, text="Select whether automated reports cover the current week or the current month.")
         try:
             scope_hint.configure(foreground="gray")
@@ -7160,8 +7266,10 @@ class CaseLogApp:
 
         self.auto_report_graph_include_png_var = tk.BooleanVar(value=bool(graph_settings.get('include_png', True)))
         self.auto_report_graph_include_csv_var = tk.BooleanVar(value=bool(graph_settings.get('include_csv', True)))
+        self.auto_report_graph_use_scope_var = tk.BooleanVar(value=bool(graph_settings.get('use_date_scope', False)))
         ttk.Checkbutton(options_container, text="Save PNG images", variable=self.auto_report_graph_include_png_var).grid(row=0, column=0, sticky='w', padx=4, pady=2)
         ttk.Checkbutton(options_container, text="Export CSV data", variable=self.auto_report_graph_include_csv_var).grid(row=0, column=1, sticky='w', padx=4, pady=2)
+        ttk.Checkbutton(options_container, text="Limit graphs to selected date scope", variable=self.auto_report_graph_use_scope_var).grid(row=0, column=2, sticky='w', padx=4, pady=2)
 
         ttk.Label(options_container, text="Year filter:").grid(row=1, column=0, sticky='w', padx=4, pady=(6, 2))
         self.auto_report_graph_year_var = tk.StringVar(value=graph_settings.get('year_filter', 'All') or 'All')
@@ -7240,6 +7348,7 @@ class CaseLogApp:
 
         self._update_schedule_frequency_controls()
         self._update_settings_graph_year_options()
+        self._update_date_scope_dependent_reports()
         self._refresh_automation_status_label(config)
 
     def _browse_auto_report_output_dir(self):
@@ -7354,6 +7463,46 @@ class CaseLogApp:
             except Exception:
                 pass
 
+    def _on_auto_report_date_scope_change(self, event=None):
+        try:
+            self._update_date_scope_dependent_reports()
+        except Exception:
+            logging.debug("Date scope change update failed", exc_info=True)
+
+    def _update_date_scope_dependent_reports(self) -> None:
+        if not hasattr(self, 'auto_report_date_range_var'):
+            return
+
+        label_to_code = getattr(self, '_auto_report_date_range_label_to_code', {})
+        current_label = self.auto_report_date_range_var.get()
+        mode_code = label_to_code.get(current_label, DEFAULT_AUTOMATED_REPORTS_CONFIG['date_range_mode'])
+        scope_disabled = mode_code == 'all'
+
+        for key in SCOPE_LIMITED_REPORT_TYPES:
+            var = self.auto_report_report_vars.get(key)
+            chk = self.auto_report_report_checks.get(key)
+            if not isinstance(var, tk.BooleanVar) or chk is None:
+                continue
+
+            if scope_disabled:
+                if key not in self._auto_report_saved_report_states:
+                    self._auto_report_saved_report_states[key] = bool(var.get())
+                var.set(False)
+                try:
+                    chk.state(['disabled'])
+                except Exception:
+                    chk.configure(state='disabled')
+                self._auto_report_disabled_reports.add(key)
+            else:
+                try:
+                    chk.state(['!disabled'])
+                except Exception:
+                    chk.configure(state='normal')
+                restored = self._auto_report_saved_report_states.get(key)
+                if restored is not None:
+                    var.set(restored)
+                self._auto_report_disabled_reports.discard(key)
+
     def _toggle_auto_report_date_range(self) -> None:
         """Deprecated helper retained for backward compatibility."""
         pass
@@ -7367,7 +7516,8 @@ class CaseLogApp:
         if not output_dir:
             raise ValueError("Output folder is required.")
 
-        report_types = [key for key, var in self.auto_report_report_vars.items() if var.get()]
+        disabled_reports = getattr(self, '_auto_report_disabled_reports', set())
+        report_types = [key for key, var in self.auto_report_report_vars.items() if var.get() and key not in disabled_reports]
         if not report_types:
             raise ValueError("Select at least one report type to generate.")
 
@@ -7434,11 +7584,13 @@ class CaseLogApp:
 
         include_png_var = getattr(self, 'auto_report_graph_include_png_var', None)
         include_csv_var = getattr(self, 'auto_report_graph_include_csv_var', None)
+        use_scope_var = getattr(self, 'auto_report_graph_use_scope_var', None)
         graph_settings = {
             "types": selected_graph_types,
             "year_filter": graph_year,
             "include_png": bool(include_png_var.get()) if include_png_var else True,
             "include_csv": bool(include_csv_var.get()) if include_csv_var else True,
+            "use_date_scope": bool(use_scope_var.get()) if use_scope_var else False,
         }
 
         # Collect map export settings
@@ -7812,7 +7964,7 @@ class CaseLogApp:
                 self.update_status(f"Failed to submit case '{case_number}'.")
 
         # Before/after adding the case, update combo values for persistent fields
-        for key in ["examiner", "investigator", "agency", "offense_type", "city_of_offense"]:
+        for key in ["examiner", "investigator", "agency", "offense_type", "city_of_offense", "forensic_tool"]:
             if key in self.entries and isinstance(self.entries[key], tk.StringVar):
                 value = self.entries[key].get().strip()
                 if value:
@@ -9503,6 +9655,7 @@ class CaseLogApp:
                     agency TEXT,
                     model TEXT,
                     os TEXT,
+                    forensic_tool TEXT,
                     data_recovered TEXT,
                     fpr_complete INTEGER,
                     notes TEXT,

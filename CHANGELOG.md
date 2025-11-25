@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+-## [3.0.2] - 2025-11-25
+- Restored the Forensic Tool field to New Case Entry with editable combo defaults for Cellebrite and Graykey plus live persistence.
+- Extended database tables, reports, exports, and views to capture and display forensic tool usage, including a dedicated graph filter.
+- Documented the new column in import guidance and refreshed user-facing version strings ahead of the 3.0.2 build.
+
 ## [3.0.1] - 2025-11-19
 - Added scoped Total Case Summary automation option that mirrors the All Cases PDF layout and highlights the selected date range.
 - Introduced a graph export toggle so weekly/monthly runs can optionally limit charts to the active date scope.
