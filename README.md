@@ -1,24 +1,42 @@
-Download exe from releases, place into a folder on your PC.  Create shortcut to desktop.  Application when launched will create a database file and folder where the exe is located.  
-- Please report any bugs.      
-- Recommend to back up data before updating for good practice.  
-- **If updating to new version, simply replace the exe where you saved it before, leaving the database folder and file will auto populate application with your previous data.**  
-  
 # CyberLab Case Tracker
 
-A digital forensics case log and reporting tool for labs and agencies, built with Python, Tkinter, and ttkbootstrap. CyberLab Case Tracker provides robust case management, advanced reporting, mapping, and analytics for digital forensic investigations.
+CyberLab Case Tracker is a digital forensic case log, reporting, mapping, and analytics tool for labs and agencies. The current release introduces a modern browser-based interface while preserving compatibility with the legacy `caselog_gui_v6.db` database and `app_data` folder.
+
+Download the EXE from Releases, place it in a folder on your PC, and create a desktop shortcut if desired. The application stores the database and `app_data` beside the EXE, which keeps deployment friendly for managed PCs that do not allow normal installers.
+
+![CyberLab Case Tracker modern browser UI](docs/images/cyberlab-modern-browser-ui.png)
+
+## Migration Update
+
+- **Modern browser UI:** The app now launches a local browser interface backed by the packaged CyberLab runtime.
+- **No installer required:** The release asset is a single EXE for admin-free deployment.
+- **Legacy data compatible:** Existing `caselog_gui_v6.db` and `app_data` can be placed beside the EXE or imported from Settings.
+- **Safety backups:** Import and restore workflows create backups before replacing active data.
+- **Report continuity:** Native exports support PDF, XLSX, CSV, graph PNG/CSV, map HTML, and map JSON output.
+- **Automated reports:** Scheduled exports can run while the app is open.
+- **Update checking:** The header can show an update badge when a newer GitHub release is available.
+- **Browser preference:** Users can choose system default browser, Chrome, Edge, or auto-detect.
+
+## Updating From an Older Version
+
+1. Back up your current application folder as good practice.
+2. Replace the old EXE with the new release EXE.
+3. Keep `caselog_gui_v6.db` and `app_data` in the same folder so previous cases, logos, map markers, and settings remain available.
+4. Launch the new EXE and confirm the header shows the expected case totals.
 
 ## Features
 
-- **New Case Entry:** Add new digital forensic cases with examiner, agency, offense, device, and more. Auto-populates last used examiner and state.
-- **View Data:** Browse, search, filter, edit, and delete case records. Undo/redo support for edits. Customizable columns.
-- **Map View:** Visualize case locations by city/state on an interactive map. Select a focal state to center the map.
-- **Graphs:** Generate charts by offense type, device, agency, examiner, and more. Graphs resize responsively to the window.
-- **Reports:** Export PDF/XLSX reports (full, summary, custom, or selected rows). Persistent report header info (agency, division, name, date) included in all reports.
-- **Import/Export:** Import cases from Excel, export to PDF/XLSX.
-- **Accessibility:** Keyboard navigation, context menus, and tooltips.
-- **Customizable:** Change themes, logo, and map marker icon.
-- **Security:** Password-protected data deletion and settings.
-- **About Tab:** Comprehensive app info and clickable developer GitHub link.
+- **Case Entry:** Add completed or in-progress digital forensic cases with examiner, investigator, agency, city, state, offense, device, volume, notes, FPR status, and recovered-data status.
+- **Workflow Retention:** Last-used Examiner, Investigator, Agency, City, State, Offense Type, and Device Type persist after saving so repeated sub-case entry is faster.
+- **Cases View:** Browse, search, sort, view, edit, duplicate, and delete completed cases.
+- **In-Progress View:** Track active cases, edit workflow status, duplicate work items, and complete in-progress cases into the main case log.
+- **Map View:** Visualize geocoded case locations with selectable map focus and custom transparent map markers.
+- **Graphs:** Preview analytics by offense type, agency, device type, examiner, investigator, city, state, tools, and volume totals.
+- **Reports:** Export PDF, XLSX, CSV, graph snapshots, map HTML, and map data files from the modern native export engine.
+- **Customization:** Change themes, app header title, report logo, map marker, tab names, tab visibility, field names, field visibility, and custom informational tabs.
+- **Custom Fields:** Add user-defined case fields that are stored with each case.
+- **Backup & Restore:** Create database backups, restore backups, and generate support bundles from Settings.
+- **Legacy Import:** Import a legacy database or zipped `app_data` folder from inside the application.
   
 ![Image](https://github.com/user-attachments/assets/a2e67522-42d9-4975-9d7a-85f0b579b4ec)
 

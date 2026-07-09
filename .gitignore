@@ -70,6 +70,15 @@ __pycache__/
 venv/
 ENV/
 
+# Build artifacts
+build/
+dist/
+*.db-shm
+*.db-wal
+modern_app/frontend/node_modules/
+modern_app/frontend/dist/
+modern_app/*.spec
+
 # Jupyter/IPython
 .ipynb_checkpoints/
 

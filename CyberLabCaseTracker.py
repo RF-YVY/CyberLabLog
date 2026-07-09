@@ -58,6 +58,7 @@ from reportlab.lib.units import inch
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.pdfbase.pdfmetrics import stringWidth
 import pandas as pd
+from ttkbootstrap.style import Colors, ThemeDefinition
 # --- App Constants & Paths ---
 APP_NAME = "CyberLab Case Tracker"
 APP_VERSION = "3.0.2.1"  # Increment before each build
@@ -100,6 +101,13 @@ CASE_LOG_MUTABLE_FIELDS = {
     "notes",
 }
 
+LAST_CASE_ENTRY_PREF_FIELDS = {
+    "investigator": "last_investigator",
+    "agency": "last_agency",
+    "city_of_offense": "last_city_of_offense",
+    "offense_type": "last_offense_type",
+}
+
 # Ensure persistent data directories exist early (for images, logs, backups)
 try:
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -130,6 +138,7 @@ except Exception:
 
 # Theme options exposed in Settings for ttkbootstrap
 THEME_OPTIONS = [
+    ("Cyber Blue", "Cyber Blue"),
     ("Flatly", "flatly"),
     ("Darkly", "darkly"),
     ("Cyborg", "cyborg"),
@@ -144,6 +153,39 @@ THEME_OPTIONS = [
     ("United", "united"),
     ("Yeti", "yeti"),
 ]
+
+CYBER_BLUE_THEME_NAME = "Cyber Blue"
+LEGACY_APRS_PROPVIEW_THEME_NAME = "aprspropview"
+
+CYBER_BLUE_THEME_COLORS = {
+    "primary": "#4aa3ff",
+    "secondary": "#21425f",
+    "success": "#25d45a",
+    "info": "#22c7f2",
+    "warning": "#f4b733",
+    "danger": "#ef5350",
+    "light": "#dcecff",
+    "dark": "#06111f",
+    "bg": "#071321",
+    "fg": "#d8e9ff",
+    "selectbg": "#1d5d8f",
+    "selectfg": "#ffffff",
+    "border": "#2f638b",
+    "inputfg": "#e8f4ff",
+    "inputbg": "#0b1b2d",
+    "active": "#173b5a",
+}
+
+
+def register_cyber_blue_theme(style):
+    """Register the Cyber Blue dark theme if ttkbootstrap is available."""
+    try:
+        if not hasattr(style, "theme_names") or CYBER_BLUE_THEME_NAME in style.theme_names():
+            return
+        colors = Colors(**CYBER_BLUE_THEME_COLORS)
+        style.register_theme(ThemeDefinition(CYBER_BLUE_THEME_NAME, colors, themetype="dark"))
+    except Exception as e:
+        logging.debug(f"Could not register Cyber Blue theme: {e}")
 
 # Common US state abbreviations (used in combos and map focal)
 US_STATE_ABBREVIATIONS = [
@@ -3246,12 +3288,56 @@ class CaseLogApp:
         """Return '#000000' or '#ffffff' depending on current theme darkness."""
         code = (self._get_current_theme_code() or '').lower()
         dark_codes = {
-            'cyborg','darkly','slate','solar','superhero','vapor','morph'
+            'cyborg','darkly','slate','solar','superhero','vapor','morph', CYBER_BLUE_THEME_NAME.lower()
         }
         try:
             return '#ffffff' if code in dark_codes else '#000000'
         except Exception:
             return '#000000'
+
+    def apply_theme_polish(self):
+        """Apply app-level style tuning for the Cyber Blue theme."""
+        try:
+            if (self._get_current_theme_code() or '').lower() != CYBER_BLUE_THEME_NAME.lower():
+                return
+            s = self.style
+            colors = CYBER_BLUE_THEME_COLORS
+            s.configure('.', background=colors['bg'], foreground=colors['fg'], fieldbackground=colors['inputbg'])
+            s.configure('TFrame', background=colors['bg'])
+            s.configure('TLabelframe', background=colors['bg'], bordercolor=colors['border'], relief='solid')
+            s.configure('TLabelframe.Label', background=colors['bg'], foreground=colors['light'], font=('Segoe UI', 10, 'bold'))
+            s.configure('TLabel', background=colors['bg'], foreground=colors['fg'])
+            s.configure('TButton', padding=(13, 7), borderwidth=1, focusthickness=1, focuscolor=colors['primary'])
+            s.configure('Accent.TButton', padding=(14, 8), font=('Segoe UI', 9, 'bold'))
+            s.configure('Danger.TButton', padding=(13, 7), foreground='#ffd9d9', font=('Segoe UI', 9, 'bold'))
+            s.configure('TEntry', fieldbackground=colors['inputbg'], foreground=colors['inputfg'], bordercolor=colors['border'], insertcolor=colors['inputfg'], padding=6)
+            s.configure('TCombobox', fieldbackground=colors['inputbg'], foreground=colors['inputfg'], bordercolor=colors['border'], arrowcolor=colors['primary'], padding=5)
+            s.configure('TNotebook', background=colors['bg'], borderwidth=0, tabmargins=(8, 8, 8, 0))
+            s.configure('TNotebook.Tab', background='#0d2135', foreground=colors['fg'], padding=(14, 8), bordercolor=colors['border'])
+            s.map('TNotebook.Tab',
+                  background=[('selected', '#173b5a'), ('active', '#12314d')],
+                  foreground=[('selected', '#ffffff'), ('active', '#ffffff')])
+            s.configure('Treeview',
+                        background='#0b1b2d',
+                        fieldbackground='#0b1b2d',
+                        foreground=colors['fg'],
+                        bordercolor=colors['border'],
+                        rowheight=30)
+            s.configure('Treeview.Heading',
+                        background='#12314d',
+                        foreground='#eaf6ff',
+                        bordercolor=colors['border'],
+                        font=('Segoe UI', 9, 'bold'),
+                        padding=(8, 6))
+            s.map('Treeview',
+                  background=[('selected', '#1d5d8f')],
+                  foreground=[('selected', '#ffffff')])
+            try:
+                self.root.configure(background=colors['bg'])
+            except Exception:
+                pass
+        except Exception as e:
+            logging.debug(f"Could not apply theme polish: {e}")
 
     def refresh_contrast_colors(self):
         """Apply contrast-aware foreground to summary numeric labels."""
@@ -3523,6 +3609,8 @@ class CaseLogApp:
             self.init_lazy_loading()
             self._lazy_filter = filter_text
             self._lazy_cases = self.get_filtered_cases(filter_text)
+            self._lazy_cases = self._sort_cases_for_view(self._lazy_cases)
+            self._last_filtered_cases = list(self._lazy_cases)
             self._lazy_total = len(self._lazy_cases)
             self._lazy_offset = 0
         try:
@@ -3530,6 +3618,66 @@ class CaseLogApp:
         except Exception:
             pass
         self.load_next_lazy_page()
+
+    def _parse_sort_date(self, value):
+        if not value:
+            return datetime.min
+        text = str(value).strip()
+        for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d', '%m-%d-%Y', '%m/%d/%Y'):
+            try:
+                return datetime.strptime(text[:19] if fmt.endswith('%S') else text[:10], fmt)
+            except Exception:
+                continue
+        return datetime.min
+
+    def _case_sort_value(self, case, column):
+        value = case.get(column)
+        cfg = self.tree_columns_config.get(column, {})
+        typ = cfg.get('type')
+        if column in ('start_date', 'end_date', 'created_at') or typ == 'date':
+            return self._parse_sort_date(value)
+        if column == 'volume_size_gb' or typ == 'numeric':
+            try:
+                return float(value)
+            except Exception:
+                return float('-inf')
+        if column == 'fpr_complete' or typ == 'boolean':
+            return 1 if str(value).lower() in ('1', 'true', 'yes', 'y', 'on') else 0
+        return str(value or '').lower()
+
+    def _sort_cases_for_view(self, cases):
+        column = getattr(self, 'treeview_sort_column', None)
+        if not column:
+            return cases
+        reverse = getattr(self, 'treeview_sort_reverse', False)
+        try:
+            return sorted(cases, key=lambda case: self._case_sort_value(case, column), reverse=reverse)
+        except Exception as e:
+            logging.warning(f"Could not sort View Data by '{column}': {e}")
+            return cases
+
+    def set_view_sort(self, column, reverse=False):
+        self.treeview_sort_column = column
+        self.treeview_sort_reverse = reverse
+        try:
+            label = self.tree_columns_config.get(column, {}).get('text', column)
+            direction = "descending" if reverse else "ascending"
+            self.update_status(f"Sorted View Data by {label} ({direction}).")
+        except Exception:
+            pass
+        self.refresh_data_view(reset_lazy=True)
+
+    def clear_view_sort(self):
+        self.treeview_sort_column = None
+        self.treeview_sort_reverse = False
+        self.update_status("Cleared View Data sorting.")
+        self.refresh_data_view(reset_lazy=True)
+
+    def sort_treeview_column(self, column):
+        reverse = False
+        if self.treeview_sort_column == column:
+            reverse = not self.treeview_sort_reverse
+        self.set_view_sort(column, reverse)
 
     def get_filtered_cases(self, filter_text):
         """Return filtered cases for the current filter/search text."""
@@ -5037,8 +5185,13 @@ class CaseLogApp:
             is_bootstrap = False
             default_theme = 'clam'  # Tkinter default
 
+        register_cyber_blue_theme(self.style)
+
         # Load saved theme or use default, and ensure it is valid
         saved_theme = get_user_pref('theme', default_theme)
+        if saved_theme == LEGACY_APRS_PROPVIEW_THEME_NAME:
+            saved_theme = CYBER_BLUE_THEME_NAME
+            set_user_pref('theme', saved_theme)
         available_themes = self.style.theme_names() if hasattr(self.style, 'theme_names') else []
         if saved_theme in available_themes:
             self.style.theme_use(saved_theme)
@@ -5049,6 +5202,8 @@ class CaseLogApp:
             set_user_pref('theme', default_theme)
             self._saved_theme_code = default_theme
             logging.warning(f"Saved theme '{saved_theme}' not available. Falling back to '{default_theme}'.")
+
+        self.apply_theme_polish()
 
         # --- Dashboard summary StringVars (must be initialized before any method uses them) ---
         import tkinter as tk
@@ -5073,6 +5228,7 @@ class CaseLogApp:
         self.submit_button = None  # Reference to the submit button for text changes
         self.in_progress_button = None  # Reference to the in progress button
         self.field_frame_container = None  # Reference to the frame holding input fields
+        self._in_progress_button_pack_info = None  # Restores the secondary entry action after edit mode
 
         # Attributes for in-progress cases
         self.in_progress_tree = None  # Treeview for in-progress cases
@@ -5557,6 +5713,7 @@ class CaseLogApp:
         # Add In Progress button
         self.in_progress_button = tb.Button(submit_button_frame, text="In Progress", command=self.submit_in_progress_case, style="Warning.TButton")
         self.in_progress_button.pack(side='left', padx=(5,0)) # Pack next to submit button
+        self._in_progress_button_pack_info = self.in_progress_button.pack_info()
 
         # Add a Cancel Edit/Clear Form button
         cancel_button = ttk.Button(submit_button_frame, text="Clear Form", command=self.clear_entry_form)
@@ -5582,6 +5739,9 @@ class CaseLogApp:
         last_examiner = self.get_last_examiner()
         if last_examiner and 'examiner' in self.entries and isinstance(self.entries['examiner'], tk.StringVar):
             self.entries['examiner'].set(last_examiner)
+
+        self.restore_last_case_entry_defaults()
+        self._bind_last_case_entry_default_traces()
 
         # --- Auto-populate State of Offense with last used value (persistent) ---
         last_state = self.get_last_state_of_offense()
@@ -5615,6 +5775,78 @@ class CaseLogApp:
     def set_last_state_of_offense(self, state):
         """Persist the last used state of offense to user prefs."""
         set_user_pref('last_state_of_offense', state)
+
+    def set_in_progress_entry_button_visible(self, visible=True):
+        """Show the In Progress action only when entering a new case."""
+        if not getattr(self, 'in_progress_button', None):
+            return
+        try:
+            if visible:
+                if not self.in_progress_button.winfo_ismapped():
+                    pack_info = self._in_progress_button_pack_info or {'side': 'left', 'padx': (5, 0)}
+                    self.in_progress_button.pack(**pack_info)
+            else:
+                if self.in_progress_button.winfo_ismapped():
+                    self.in_progress_button.pack_forget()
+        except Exception as e:
+            logging.debug(f"Could not update In Progress button visibility: {e}")
+
+    def get_last_case_entry_default(self, key):
+        """Return a persisted New Case Entry default, falling back to the most recent case."""
+        pref_key = LAST_CASE_ENTRY_PREF_FIELDS.get(key)
+        if not pref_key:
+            return None
+        value = get_user_pref(pref_key, None)
+        if value:
+            return value
+        try:
+            cases = get_all_cases_db()
+            for case in reversed(cases):
+                value = (case.get(key) or '').strip()
+                if value:
+                    return value
+        except Exception as e:
+            logging.warning(f"Could not get last entry default for '{key}': {e}")
+        return None
+
+    def set_last_case_entry_default(self, key, value):
+        """Persist a New Case Entry default used for repeated case entry."""
+        pref_key = LAST_CASE_ENTRY_PREF_FIELDS.get(key)
+        if pref_key:
+            set_user_pref(pref_key, (value or '').strip())
+
+    def remember_last_case_entry_defaults(self, case_data=None):
+        """Persist workflow fields that should carry into the next new case."""
+        source = case_data or {}
+        for key in LAST_CASE_ENTRY_PREF_FIELDS:
+            value = source.get(key)
+            if value is None and key in self.entries and isinstance(self.entries[key], tk.StringVar):
+                value = self.entries[key].get()
+            value = (value or '').strip()
+            if value:
+                self.set_last_case_entry_default(key, value)
+                self._add_value_to_combo_list(key, value)
+
+    def restore_last_case_entry_defaults(self):
+        """Restore the workflow fields that should persist between new cases."""
+        for key in LAST_CASE_ENTRY_PREF_FIELDS:
+            if key in self.entries and isinstance(self.entries[key], tk.StringVar):
+                value = self.get_last_case_entry_default(key)
+                if value:
+                    self.entries[key].set(value)
+
+    def _bind_last_case_entry_default_traces(self):
+        if getattr(self, '_last_case_entry_traces_bound', False):
+            return
+        for key in LAST_CASE_ENTRY_PREF_FIELDS:
+            if key in self.entries and isinstance(self.entries[key], tk.StringVar):
+                var = self.entries[key]
+                def on_change(*args, key=key, var=var):
+                    value = (var.get() or '').strip()
+                    if value:
+                        self.set_last_case_entry_default(key, value)
+                var.trace_add('write', on_change)
+        self._last_case_entry_traces_bound = True
 
     def get_last_examiner(self):
         """Return the last used examiner from the most recent case, or None if not found."""
@@ -5661,6 +5893,23 @@ class CaseLogApp:
         self.filters_menu = tk.Menu(self.filters_button, tearoff=0)
         self.filters_button.configure(menu=self.filters_menu)
         self.rebuild_filters_menu()
+
+        # Sort menu
+        sort_button = ttk.Menubutton(search_frame, text="Sort", direction='below')
+        sort_button.pack(side='left', padx=(10, 0))
+        sort_menu = tk.Menu(sort_button, tearoff=0)
+        sort_menu.add_command(label="Newest to Oldest", command=lambda: self.set_view_sort('created_at', True))
+        sort_menu.add_command(label="Oldest to Newest", command=lambda: self.set_view_sort('created_at', False))
+        sort_menu.add_separator()
+        sort_menu.add_command(label="Start Date Newest First", command=lambda: self.set_view_sort('start_date', True))
+        sort_menu.add_command(label="Start Date Oldest First", command=lambda: self.set_view_sort('start_date', False))
+        sort_menu.add_separator()
+        sort_menu.add_command(label="Case # A to Z", command=lambda: self.set_view_sort('case_number', False))
+        sort_menu.add_command(label="Agency A to Z", command=lambda: self.set_view_sort('agency', False))
+        sort_menu.add_command(label="Offense A to Z", command=lambda: self.set_view_sort('offense_type', False))
+        sort_menu.add_separator()
+        sort_menu.add_command(label="Clear Sort", command=self.clear_view_sort)
+        sort_button.configure(menu=sort_menu)
 
         # Reports button with dropdown menu
         reports_button = ttk.Menubutton(search_frame, text="Reports", direction='below')
@@ -7005,6 +7254,7 @@ class CaseLogApp:
                     pass
             set_user_pref('theme', selected_code)
             self._saved_theme_code = selected_code
+            self.apply_theme_polish()
             # Refresh contrast-aware labels immediately so values flip black/white without restart
             try:
                 self.root.after_idle(self.refresh_contrast_colors)
@@ -7932,6 +8182,7 @@ class CaseLogApp:
         # Ensure fpr_complete is handled correctly (already was BooleanVar)
         # submit_case handles this conversion to 0/1 for DB before insertion/update
 
+        self.remember_last_case_entry_defaults(case_data)
 
         # --- Insert or Update based on editing state ---
         if self.editing_in_progress_case_id is not None:
@@ -8037,6 +8288,8 @@ class CaseLogApp:
             case_data['data_recovered'] = "No"
         else:
             case_data['data_recovered'] = ""
+
+        self.remember_last_case_entry_defaults(case_data)
 
         # --- Add or Update in-progress case ---
         if self.editing_in_progress_case_id is not None:
@@ -8205,9 +8458,8 @@ class CaseLogApp:
         
         # Update button text and tab title
         if self.submit_button:
-            self.submit_button.config(text="Update In-Progress", style="Warning.TButton")
-        if self.in_progress_button:
-            self.in_progress_button.config(text="Save Changes", style="Accent.TButton")
+            self.submit_button.config(text="Save Changes", style="Accent.TButton")
+        self.set_in_progress_entry_button_visible(False)
         
         # Switch to entry tab
         self.notebook.select(self.entry_frame)
@@ -8612,6 +8864,7 @@ class CaseLogApp:
             self.submit_button.config(text="Submit Case", style="Accent.TButton")
         if hasattr(self, 'in_progress_button') and self.in_progress_button:
             self.in_progress_button.config(text="In Progress", style="Warning.TButton")
+            self.set_in_progress_entry_button_visible(True)
         if hasattr(self, 'notebook') and hasattr(self, 'entry_frame'):
             self.notebook.tab(self.entry_frame, text="New Case Entry")
 
@@ -8631,7 +8884,10 @@ class CaseLogApp:
                             break
                 if combo_widget:
                     current_values = combo_widget.cget('values')
-                    if key == "state_of_offense" and "MS" in current_values:
+                    remembered_value = self.get_last_case_entry_default(key) if key in LAST_CASE_ENTRY_PREF_FIELDS else None
+                    if remembered_value:
+                        widget.set(remembered_value)
+                    elif key == "state_of_offense" and "MS" in current_values:
                         widget.set("MS")
                     elif current_values:
                         widget.set(current_values[0])
@@ -8654,6 +8910,8 @@ class CaseLogApp:
         last_examiner = self.get_last_examiner()
         if last_examiner and 'examiner' in self.entries and isinstance(self.entries['examiner'], tk.StringVar):
             self.entries['examiner'].set(last_examiner)
+
+        self.restore_last_case_entry_defaults()
 
     # Removed duplicate/broken load_map_markers. The correct version is defined earlier in the class.
 
@@ -9082,7 +9340,8 @@ class CaseLogApp:
             # Set editing state
             self.editing_case_id = db_id
             if self.submit_button:
-                self.submit_button.config(text="Update Case")
+                self.submit_button.config(text="Update Case", style="Accent.TButton")
+            self.set_in_progress_entry_button_visible(False)
             self.notebook.tab(self.entry_frame, text="Edit Case")
 
         except Exception as e:

@@ -5,3 +5,7 @@ tkintermapview
 geopy
 openpyxl
 reportlab
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
