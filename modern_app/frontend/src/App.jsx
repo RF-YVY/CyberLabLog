@@ -106,6 +106,12 @@ const themes = [
   ["light-blue", "Light Blue"],
   ["cyan-hud", "Cyan HUD"],
   ["ember-focus", "Ember Focus"],
+  ["soft-relief", "Soft Relief"],
+  ["spectrum-glass", "Spectrum Glass"],
+  ["electric-azure", "Electric Azure"],
+  ["aqua-command", "Aqua Command"],
+  ["violet-flow", "Violet Flow"],
+  ["carbon-intelligence", "Carbon Intelligence"],
 ];
 
 const defaultThemePreferences = {
@@ -121,6 +127,11 @@ const reportTypeOptions = [
   ["map_html", "Map HTML"],
 ];
 
+const reportOutputFolderOptions = [
+  ["reports", "Reports Folder"],
+  ...reportTypeOptions,
+];
+
 const graphTypeOptions = [
   "Offense Type",
   "Device Type",
@@ -130,6 +141,7 @@ const graphTypeOptions = [
   "City of Offense",
   "State of Offense",
   "Total Volume by Examiner",
+  "Total Volume by Investigator",
   "Total Volume by Agency",
   "Total Volume by Device Type",
 ];
@@ -186,7 +198,7 @@ const analyticsGraphGroups = [
 
 const defaultReportConfig = {
   output_dir: "",
-  frequency: "weekly",
+  frequency: "manual",
   date_range_mode: "current_week",
   report_types: ["total_summary_pdf", "all_cases_pdf"],
   page_size: "Letter",
@@ -198,7 +210,7 @@ const defaultReportConfig = {
   report_output_dirs: {},
   graph_settings: {
     include_png: true,
-    include_csv: true,
+    include_csv: false,
     year_filter: "All",
     types: ["Offense Type", "Device Type", "Agency"],
   },
@@ -206,9 +218,44 @@ const defaultReportConfig = {
     include_completed: true,
     include_in_progress: true,
     include_case_details: true,
-    include_data_file: true,
+    include_data_file: false,
+  },
+  data_exports: {
+    include_completed_csv: false,
+    include_in_progress_csv: false,
+    include_summary_json: false,
   },
 };
+
+function normalizeReportConfig(value) {
+  const stored = value && typeof value === "object" ? value : {};
+  const legacyOutputDefaults = !Object.prototype.hasOwnProperty.call(stored, "data_exports");
+  const merged = {
+    ...defaultReportConfig,
+    ...stored,
+    report_output_dirs: {
+      ...defaultReportConfig.report_output_dirs,
+      ...(stored.report_output_dirs || {}),
+    },
+    graph_settings: {
+      ...defaultReportConfig.graph_settings,
+      ...(stored.graph_settings || {}),
+    },
+    map_settings: {
+      ...defaultReportConfig.map_settings,
+      ...(stored.map_settings || {}),
+    },
+    data_exports: {
+      ...defaultReportConfig.data_exports,
+      ...(stored.data_exports || {}),
+    },
+  };
+  if (legacyOutputDefaults) {
+    merged.graph_settings.include_csv = false;
+    merged.map_settings.include_data_file = false;
+  }
+  return merged;
+}
 
 const defaultAppProfile = {
   app_title: "CyberLab Case Tracker",
@@ -497,7 +544,7 @@ function App() {
   const [comboValues, setComboValues] = useState({});
   const [logoInfo, setLogoInfo] = useState({ exists: false, path: "" });
   const [markerIconInfo, setMarkerIconInfo] = useState({ exists: false, path: "" });
-  const [appInfo, setAppInfo] = useState({ name: "CyberLab Case Tracker", version: "3.0.3", update_available: false });
+  const [appInfo, setAppInfo] = useState({ name: "CyberLab Case Tracker", version: "3.0.4", update_available: false });
   const [appProfile, setAppProfile] = useState(defaultAppProfile);
   const [mapPreferences, setMapPreferences] = useState(defaultMapPreferences);
   const [browserPreferences, setBrowserPreferences] = useState(defaultBrowserPreferences);
@@ -557,7 +604,7 @@ function App() {
     try {
       const [healthData, appInfoData, profileData, uiCustomizationData, mapPreferenceData, browserPreferenceData, themePreferenceData, caseData, progressData, configData, schedulerData, analyticsData, markerData, comboData, logoData, markerIconData, backupData] = await Promise.all([
         api("/api/health"),
-        api("/api/app-info").catch(() => ({ name: "CyberLab Case Tracker", version: "3.0.3", update_available: false })),
+        api("/api/app-info").catch(() => ({ name: "CyberLab Case Tracker", version: "3.0.4", update_available: false })),
         api("/api/settings/json/app_profile").catch(() => ({ value: defaultAppProfile })),
         api("/api/settings/json/ui_customization").catch(() => ({ value: defaultUiCustomization })),
         api("/api/settings/json/map_preferences").catch(() => ({ value: defaultMapPreferences })),
@@ -575,7 +622,7 @@ function App() {
         api("/api/backups").catch(() => ({ backup_dir: "", files: [] })),
       ]);
       setHealth(healthData);
-      setAppInfo(appInfoData || { name: "CyberLab Case Tracker", version: "3.0.3", update_available: false });
+      setAppInfo(appInfoData || { name: "CyberLab Case Tracker", version: "3.0.4", update_available: false });
       setAppProfile({ ...defaultAppProfile, ...(profileData.value || {}) });
       setUiCustomization({ ...defaultUiCustomization, ...(uiCustomizationData.value || {}) });
       setMapPreferences({ ...defaultMapPreferences, ...(mapPreferenceData.value || {}) });
@@ -586,7 +633,7 @@ function App() {
       setSettingsLoaded(true);
       setCases(caseData);
       setInProgress(progressData);
-      setReportConfig({ ...defaultReportConfig, ...(configData.value || {}) });
+      setReportConfig(normalizeReportConfig(configData.value));
       setSchedulerStatus(schedulerData || { enabled: false, configured: {} });
       setAnalytics(analyticsData || { offenses: [], agencies: [], devices: [], examiners: [] });
       setMapMarkers(markerData.markers || []);
@@ -1010,6 +1057,36 @@ function App() {
     }));
   }
 
+  async function chooseOutputFolder(reportType = null, label = "Output Folder") {
+    setBusy(true);
+    try {
+      const currentPath = reportType ? reportConfig.report_output_dirs?.[reportType] : reportConfig.output_dir;
+      const result = await api("/api/files/select-folder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          initial_dir: currentPath || reportConfig.output_dir || "",
+          title: `Select ${label}`,
+        }),
+      });
+      if (!result.path) {
+        setStatus("Folder selection canceled");
+        return;
+      }
+      if (reportType) {
+        updateReportOutputDir(reportType, result.path);
+      } else {
+        setReportConfig((current) => ({ ...current, output_dir: result.path }));
+        await loadOutputFiles(result.path);
+      }
+      setStatus(`Selected folder: ${result.path}`);
+    } catch (error) {
+      setStatus(`Folder selection failed: ${error.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function loadOutputFiles(path = reportConfig.output_dir) {
     if (!path) {
       setOutputFiles({ exists: false, files: [] });
@@ -1080,7 +1157,9 @@ function App() {
         body: JSON.stringify({ value: reportConfig }),
       });
       setExportResult(result);
-      setStatus(`Native exports complete: ${result.files?.length || 0} files`);
+      const pdfCount = result.pdf_files?.length || 0;
+      const reportsPath = result.report_dirs?.reports ? ` / Reports: ${result.report_dirs.reports}` : "";
+      setStatus(`Native exports complete: ${result.files?.length || 0} files, ${pdfCount} PDFs${reportsPath}`);
       await loadOutputFiles(result.output_dir || reportConfig.output_dir);
     } catch (error) {
       setStatus(`Native export failed: ${error.message}`);
@@ -1121,7 +1200,7 @@ function App() {
       .map((tab) => [`custom:${tab.key}`, tab.label || tab.key]);
     return [...builtIns, ...customTabs];
   }, [uiCustomization]);
-  const appVersionLabel = `v${appInfo.version || "3.0.3"}`;
+  const appVersionLabel = `v${appInfo.version || "3.0.4"}`;
 
   useEffect(() => {
     if (navItems.length && !navItems.some(([key]) => key === activeTab)) {
@@ -1383,7 +1462,19 @@ function App() {
               <form onSubmit={saveReportConfig}>
                 <h2><FileText size={18} /> Automated Reports</h2>
                 <div className="form-grid two-col">
-                  <Field label="Output Folder" name="output_dir" form={reportConfig} setForm={(fn) => setReportConfig(fn)} />
+                  <label className="field path-field">
+                    <span>Output Folder</span>
+                    <div className="path-input-row">
+                      <input
+                        value={reportConfig.output_dir || ""}
+                        onChange={(event) => setReportConfig((current) => ({ ...current, output_dir: event.target.value }))}
+                        placeholder="Choose output folder"
+                      />
+                      <button className="ghost-action compact" type="button" onClick={() => chooseOutputFolder(null, "Output Folder")} disabled={busy}>
+                        <FolderOpen size={16} /> Choose
+                      </button>
+                    </div>
+                  </label>
                   <Field label="Frequency" name="frequency" form={reportConfig} setForm={(fn) => setReportConfig(fn)} options={["manual", "daily", "weekly", "monthly"]} />
                   <Field label="Date Scope" name="date_range_mode" form={reportConfig} setForm={(fn) => setReportConfig(fn)} options={["all", "current_week", "current_month"]} />
                   <Field label="Page Size" name="page_size" form={reportConfig} setForm={(fn) => setReportConfig(fn)} options={["Letter", "Legal", "A4"]} />
@@ -1455,17 +1546,28 @@ function App() {
                   <label><input type="checkbox" checked={Boolean(reportConfig.map_settings?.include_data_file)} onChange={(event) => updateNestedReportConfig("map_settings", "include_data_file", event.target.checked)} /> Map data files</label>
                   <label><input type="checkbox" checked={Boolean(reportConfig.map_settings?.include_case_details)} onChange={(event) => updateNestedReportConfig("map_settings", "include_case_details", event.target.checked)} /> Map case details</label>
                 </div>
+                <div className="settings-checks">
+                  <strong className="settings-checks-title">Raw Data Files</strong>
+                  <label><input type="checkbox" checked={Boolean(reportConfig.data_exports?.include_completed_csv)} onChange={(event) => updateNestedReportConfig("data_exports", "include_completed_csv", event.target.checked)} /> Completed cases CSV</label>
+                  <label><input type="checkbox" checked={Boolean(reportConfig.data_exports?.include_in_progress_csv)} onChange={(event) => updateNestedReportConfig("data_exports", "include_in_progress_csv", event.target.checked)} /> In-progress cases CSV</label>
+                  <label><input type="checkbox" checked={Boolean(reportConfig.data_exports?.include_summary_json)} onChange={(event) => updateNestedReportConfig("data_exports", "include_summary_json", event.target.checked)} /> Summary JSON</label>
+                </div>
                 <div className="per-report-grid">
                   <strong className="settings-checks-title">Optional Output Folders</strong>
                   <p className="muted">Leave blank to use the main output folder. These are preserved for the export engine as we finish the native scheduler.</p>
-                  {reportTypeOptions.map(([value, label]) => (
-                    <label className="field" key={value}>
+                  {reportOutputFolderOptions.map(([value, label]) => (
+                    <label className="field path-field" key={value}>
                       <span>{label}</span>
-                      <input
-                        value={reportConfig.report_output_dirs?.[value] || ""}
-                        onChange={(event) => updateReportOutputDir(value, event.target.value)}
-                        placeholder="Optional folder path"
-                      />
+                      <div className="path-input-row">
+                        <input
+                          value={reportConfig.report_output_dirs?.[value] || ""}
+                          onChange={(event) => updateReportOutputDir(value, event.target.value)}
+                          placeholder="Optional folder path"
+                        />
+                        <button className="ghost-action compact" type="button" onClick={() => chooseOutputFolder(value, label)} disabled={busy}>
+                          <FolderOpen size={16} /> Choose
+                        </button>
+                      </div>
                     </label>
                   ))}
                 </div>
@@ -1747,7 +1849,7 @@ function App() {
                   </div>
                   <button className="primary-action inline" type="submit" disabled={busy || !comboEditor.value.trim()}><Save size={16} /> Add Value</button>
                   <div className="combo-preview">
-                    {(comboValues[comboEditor.key] || []).slice(0, 24).map((value) => (
+                    {(comboValues[comboEditor.key] || []).map((value) => (
                       <span className="combo-chip" key={value}>
                         <b>{value}</b>
                         <button

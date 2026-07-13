@@ -6,6 +6,16 @@ Download the EXE from Releases, place it in a folder on your PC, and create a de
 
 ![CyberLab Case Tracker modern browser UI](docs/images/cyberlab-modern-browser-ui.png)
 
+## Current Release: v3.0.4
+
+- Adds six interface themes: Soft Relief, Spectrum Glass, Electric Azure, Aqua Command, Violet Flow, and Carbon Intelligence.
+- Shows every saved dropdown value in Settings and promotes newly used values for immediate editing or deletion.
+- Restores all-time PDF reports, graph statistics, and areas-served map output while retaining date-scoped reports.
+- Replaces existing report, graph, and map files during export so shared OneDrive folders stay current without accumulating duplicates.
+- Adds Windows folder selection for the main and per-report output locations.
+- Prevents report generation during ordinary application startup; exports run manually or at the configured schedule time.
+- Includes packaged ReportLab dependencies and PDF-generation corrections for the single-EXE build.
+
 ## Migration Update
 
 - **Modern browser UI:** The app now launches a local browser interface backed by the packaged CyberLab runtime.

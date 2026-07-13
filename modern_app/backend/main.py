@@ -49,7 +49,7 @@ FRONTEND_ASSETS = FRONTEND_DIST / "assets"
 RUNTIME_STARTED_AT = time.monotonic()
 LAST_BROWSER_HEARTBEAT = 0.0
 SHUTDOWN_REQUESTED = False
-APP_VERSION = "3.0.3"
+APP_VERSION = "3.0.4"
 GITHUB_REPO = "RF-YVY/CyberLabLog"
 UPDATE_CACHE_TTL_SECONDS = 900
 UPDATE_CACHE: dict[str, Any] = {"checked_at": 0.0, "value": None}
@@ -62,6 +62,7 @@ SCHEDULER_STATUS: dict[str, Any] = {
     "last_result": None,
     "last_error": "",
 }
+LAST_SCHEDULE_TOKEN = ""
 
 
 app = FastAPI(title="CyberLab Modern API", version=APP_VERSION)
@@ -94,7 +95,7 @@ DEFAULT_AUTOMATED_CONFIG = {
     "report_output_dirs": {},
     "graph_settings": {
         "include_png": True,
-        "include_csv": True,
+        "include_csv": False,
         "year_filter": "All",
         "types": ["Offense Type", "Device Type", "Agency"],
     },
@@ -102,7 +103,12 @@ DEFAULT_AUTOMATED_CONFIG = {
         "include_completed": True,
         "include_in_progress": True,
         "include_case_details": True,
-        "include_data_file": True,
+        "include_data_file": False,
+    },
+    "data_exports": {
+        "include_completed_csv": False,
+        "include_in_progress_csv": False,
+        "include_summary_json": False,
     },
 }
 
@@ -120,6 +126,11 @@ class JsonSettingRequest(BaseModel):
 
 class OutputPathRequest(BaseModel):
     path: str
+
+
+class SelectFolderRequest(BaseModel):
+    initial_dir: str | None = None
+    title: str | None = None
 
 
 class ComboValueRequest(BaseModel):
@@ -269,14 +280,23 @@ def _automated_config() -> dict[str, Any]:
     stored = get_json_setting("automated_reports", {})
     if isinstance(stored, dict):
         value.update(stored)
+        legacy_output_defaults = "data_exports" not in stored
         if isinstance(stored.get("graph_settings"), dict):
             graph_settings = DEFAULT_AUTOMATED_CONFIG["graph_settings"].copy()
             graph_settings.update(stored["graph_settings"])
+            if legacy_output_defaults:
+                graph_settings["include_csv"] = False
             value["graph_settings"] = graph_settings
         if isinstance(stored.get("map_settings"), dict):
             map_settings = DEFAULT_AUTOMATED_CONFIG["map_settings"].copy()
             map_settings.update(stored["map_settings"])
+            if legacy_output_defaults:
+                map_settings["include_data_file"] = False
             value["map_settings"] = map_settings
+        if isinstance(stored.get("data_exports"), dict):
+            data_exports = DEFAULT_AUTOMATED_CONFIG["data_exports"].copy()
+            data_exports.update(stored["data_exports"])
+            value["data_exports"] = data_exports
     return value
 
 
@@ -291,7 +311,7 @@ def _schedule_token(config: dict[str, Any], now: datetime) -> str | None:
         hour, minute = [int(part) for part in schedule_time.split(":", 1)]
     except (ValueError, TypeError):
         hour, minute = 8, 0
-    if (now.hour, now.minute) < (hour, minute):
+    if (now.hour, now.minute) != (hour, minute):
         return None
     if frequency == "daily":
         return now.strftime("daily:%Y-%m-%d")
@@ -310,6 +330,7 @@ def _schedule_token(config: dict[str, Any], now: datetime) -> str | None:
 
 
 def _scheduler_loop() -> None:
+    global LAST_SCHEDULE_TOKEN
     while True:
         try:
             config = _automated_config()
@@ -322,7 +343,8 @@ def _scheduler_loop() -> None:
                 "last_checked": now.isoformat(timespec="seconds"),
                 "last_error": "",
             })
-            if token and token != last_token:
+            if token and token != last_token and token != LAST_SCHEDULE_TOKEN:
+                LAST_SCHEDULE_TOKEN = token
                 result = run_native_exports(config)
                 set_json_setting("automated_report_scheduler", {
                     "last_token": token,
@@ -786,6 +808,35 @@ def list_output_files(payload: OutputPathRequest) -> dict[str, Any]:
                 "modified": stat.st_mtime,
             })
     return {"path": str(path), "exists": True, "files": files}
+
+
+@app.post("/api/files/select-folder")
+def select_folder(payload: SelectFolderRequest) -> dict[str, Any]:
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Folder picker is unavailable: {exc}") from exc
+
+    initial = Path(payload.initial_dir).expanduser() if payload.initial_dir else Path.home()
+    if not initial.exists() or not initial.is_dir():
+        initial = Path.home()
+
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        selected = filedialog.askdirectory(
+            parent=root,
+            title=payload.title or "Select output folder",
+            initialdir=str(initial),
+            mustexist=True,
+        )
+        root.destroy()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not open folder picker: {exc}") from exc
+
+    return {"path": selected or ""}
 
 
 @app.get("/")

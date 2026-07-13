@@ -22,12 +22,14 @@ GRAPH_COLUMN_MAP = {
     "City of Offense": "city_of_offense",
     "State of Offense": "state_of_offense",
     "Total Volume by Examiner": "examiner",
+    "Total Volume by Investigator": "investigator",
     "Total Volume by Agency": "agency",
     "Total Volume by Device Type": "device_type",
 }
 
 VOLUME_GRAPH_TYPES = {
     "Total Volume by Examiner",
+    "Total Volume by Investigator",
     "Total Volume by Agency",
     "Total Volume by Device Type",
 }
@@ -35,49 +37,90 @@ VOLUME_GRAPH_TYPES = {
 
 def run_native_exports(config: dict[str, Any]) -> dict[str, Any]:
     ensure_schema()
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = _resolve_output_dir(config.get("output_dir"))
     output_dir.mkdir(parents=True, exist_ok=True)
+    report_types = set(config.get("report_types") or [])
 
     completed_rows = _read_rows("case_log", CASE_COLUMNS)
     progress_rows = _read_rows("in_progress_cases", IN_PROGRESS_COLUMNS)
     scoped_rows = _scope_rows(completed_rows, config)
 
     files: list[dict[str, Any]] = []
-    files.append(_write_csv(output_dir / f"cyberlab_completed_cases_{stamp}.csv", scoped_rows, CASE_COLUMNS))
-    files.append(_write_csv(output_dir / f"cyberlab_in_progress_cases_{stamp}.csv", progress_rows, IN_PROGRESS_COLUMNS))
-    files.append(_write_json(output_dir / f"cyberlab_summary_{stamp}.json", _summary(scoped_rows, progress_rows, config)))
+    data_exports = config.get("data_exports") if isinstance(config.get("data_exports"), dict) else {}
+    if data_exports.get("include_completed_csv"):
+        files.append(_write_csv(output_dir / "cyberlab_completed_cases.csv", scoped_rows, CASE_COLUMNS))
+    if data_exports.get("include_in_progress_csv"):
+        files.append(_write_csv(output_dir / "cyberlab_in_progress_cases.csv", progress_rows, IN_PROGRESS_COLUMNS))
+    if data_exports.get("include_summary_json"):
+        files.append(_write_json(output_dir / "cyberlab_summary.json", _summary(scoped_rows, progress_rows, config)))
 
     graph_settings = config.get("graph_settings") if isinstance(config.get("graph_settings"), dict) else {}
     if graph_settings.get("include_csv", True) or graph_settings.get("include_png", True):
         graph_dir = _report_dir(output_dir, config, "graphs_snapshot")
         graph_dir.mkdir(parents=True, exist_ok=True)
+        _remove_generated_files(graph_dir, ("cyberlab_graph_*.png", "cyberlab_graph_*.csv"))
         for graph_type in graph_settings.get("types") or ["Offense Type", "Device Type", "Agency"]:
-            graph_rows = _graph_rows(graph_type, scoped_rows)
+            graph_rows = _graph_rows(graph_type, completed_rows)
             if not graph_rows:
                 continue
             safe_name = _safe_filename(graph_type)
             if graph_settings.get("include_csv", True):
-                files.append(_write_graph_csv(graph_dir, stamp, safe_name, graph_rows))
+                files.append(_write_graph_csv(graph_dir, safe_name, graph_rows))
             if graph_settings.get("include_png", True):
-                graph_png = _write_graph_png(graph_dir, stamp, graph_type, safe_name, graph_rows)
+                graph_png = _write_graph_png(graph_dir, graph_type, safe_name, graph_rows)
                 if graph_png:
                     files.append(graph_png)
 
     map_settings = config.get("map_settings") if isinstance(config.get("map_settings"), dict) else {}
-    if map_settings.get("include_data_file", True) or "map_html" in (config.get("report_types") or []):
+    if map_settings.get("include_data_file", False) or "map_html" in report_types:
         map_dir = _report_dir(output_dir, config, "map_html")
         map_dir.mkdir(parents=True, exist_ok=True)
-        map_points = _map_points(scoped_rows, progress_rows, map_settings)
-        if map_settings.get("include_data_file", True):
-            files.append(_write_json(map_dir / f"cyberlab_map_data_{stamp}.json", map_points))
-        files.append(_write_map_html(map_dir / f"cyberlab_case_map_{stamp}.html", map_points, map_settings))
+        _remove_generated_files(map_dir, ("areas_served_map*.html", "cyberlab_map_data*.json"))
+        map_points = _map_points(completed_rows, progress_rows, map_settings)
+        if map_settings.get("include_data_file", False):
+            files.append(_write_json(map_dir / "cyberlab_map_data.json", map_points))
+        files.append(_write_map_html(map_dir / "areas_served_map.html", map_points, map_settings))
 
-    pdf_file = _write_summary_pdf(output_dir / f"cyberlab_summary_{stamp}.pdf", scoped_rows, progress_rows, config)
-    if pdf_file:
-        files.append(pdf_file)
-    if "total_summary_xlsx" in (config.get("report_types") or []):
-        xlsx_file = _write_summary_xlsx(output_dir / f"cyberlab_summary_{stamp}.xlsx", scoped_rows, progress_rows, config)
+    report_cleanup_patterns = (
+        "total_case_summary*.pdf",
+        "date_scope_cases_summary*.pdf",
+        "all_cases_summary*.pdf",
+        "total_case_summary*.xlsx",
+    )
+    for report_type in ("reports", "total_summary_pdf", "total_summary_pdf_scope", "all_cases_pdf", "total_summary_xlsx"):
+        reports_dir = _report_dir(output_dir, config, report_type)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        _remove_generated_files(reports_dir, report_cleanup_patterns)
+    if "total_summary_pdf" in report_types:
+        pdf_file = _write_summary_pdf(
+            _target_file(output_dir, config, "total_summary_pdf", "total_case_summary.pdf"),
+            completed_rows,
+            progress_rows,
+            _report_config(config, title="Total Case Summary", scope_label="All Time", detail_limit=30),
+        )
+        if pdf_file:
+            files.append(pdf_file)
+    if "total_summary_pdf_scope" in report_types:
+        scope_name = _safe_filename(_scope_label(config))
+        pdf_file = _write_summary_pdf(
+            _target_file(output_dir, config, "total_summary_pdf_scope", f"date_scope_cases_summary_{scope_name}.pdf"),
+            scoped_rows,
+            progress_rows,
+            _report_config(config, title="Date Scope Case Summary", detail_limit=30),
+        )
+        if pdf_file:
+            files.append(pdf_file)
+    if "all_cases_pdf" in report_types:
+        pdf_file = _write_summary_pdf(
+            _target_file(output_dir, config, "all_cases_pdf", "all_cases_summary.pdf"),
+            completed_rows,
+            progress_rows,
+            _report_config(config, title="All Cases Summary", scope_label="All Time", detail_limit=max(len(completed_rows), 30)),
+        )
+        if pdf_file:
+            files.append(pdf_file)
+    if "total_summary_xlsx" in report_types:
+        xlsx_file = _write_summary_xlsx(_target_file(output_dir, config, "total_summary_xlsx", "total_case_summary.xlsx"), completed_rows, progress_rows, _report_config(config, scope_label="All Time"))
         if xlsx_file:
             files.append(xlsx_file)
 
@@ -87,6 +130,13 @@ def run_native_exports(config: dict[str, Any]) -> dict[str, Any]:
         "output_dir": str(output_dir),
         "completed_cases": len(scoped_rows),
         "in_progress_cases": len(progress_rows),
+        "requested_report_types": sorted(report_types),
+        "pdf_files": [file for file in files if str(file.get("name", "")).lower().endswith(".pdf")],
+        "report_dirs": {
+            "reports": str(_report_dir(output_dir, config, "reports")),
+            "graphs": str(_report_dir(output_dir, config, "graphs_snapshot")),
+            "map": str(_report_dir(output_dir, config, "map_html")),
+        },
         "files": files,
     }
 
@@ -97,13 +147,44 @@ def _resolve_output_dir(path: str | None) -> Path:
     return automated_reports_dir()
 
 
+DEFAULT_REPORT_SUBDIRS = {
+    "reports": "Reports",
+    "total_summary_pdf": "Reports",
+    "total_summary_pdf_scope": "Reports",
+    "total_summary_xlsx": "Reports",
+    "all_cases_pdf": "Reports",
+    "graphs_snapshot": "Graphs",
+    "map_html": "Areas Served Map",
+}
+
+
 def _report_dir(output_dir: Path, config: dict[str, Any], report_type: str) -> Path:
     report_dirs = config.get("report_output_dirs") if isinstance(config.get("report_output_dirs"), dict) else {}
     value = str(report_dirs.get(report_type) or "").strip()
+    if not value and report_type in {"total_summary_pdf", "total_summary_pdf_scope", "total_summary_xlsx", "all_cases_pdf"}:
+        value = str(report_dirs.get("reports") or "").strip()
+    if not value:
+        value = DEFAULT_REPORT_SUBDIRS.get(report_type, "")
     if not value:
         return output_dir
     path = Path(value).expanduser()
     return path if path.is_absolute() else output_dir / path
+
+
+def _target_file(output_dir: Path, config: dict[str, Any], report_type: str, filename: str) -> Path:
+    directory = _report_dir(output_dir, config, report_type)
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / filename
+
+
+def _remove_generated_files(directory: Path, patterns: tuple[str, ...]) -> None:
+    for pattern in patterns:
+        for path in directory.glob(pattern):
+            if path.is_file():
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
 
 
 def _read_rows(table: str, columns: list[str]) -> list[dict[str, Any]]:
@@ -179,6 +260,8 @@ def _report_profile() -> dict[str, str]:
 
 
 def _profile_lines(styles: Any) -> list[Any]:
+    from reportlab.platypus import Paragraph
+
     profile = _report_profile()
     lines = []
     if profile["organization"]:
@@ -188,9 +271,10 @@ def _profile_lines(styles: Any) -> list[Any]:
     return lines
 
 
-def _top_counts(rows: list[dict[str, Any]], column: str, limit: int = 10) -> list[dict[str, Any]]:
+def _top_counts(rows: list[dict[str, Any]], column: str, limit: int | None = 10) -> list[dict[str, Any]]:
     counts = Counter((str(row.get(column) or "Unknown").strip() or "Unknown") for row in rows)
-    return [{"label": label, "value": value} for label, value in counts.most_common(limit)]
+    items = counts.most_common(limit) if limit else counts.most_common()
+    return [{"label": label, "value": value} for label, value in items]
 
 
 def _geocache_lookup() -> dict[str, tuple[float, float]]:
@@ -255,7 +339,7 @@ def _map_points(
                 "offense_type": row.get("offense_type") or "",
                 "status": status,
             })
-    return sorted(grouped.values(), key=lambda item: (-item["case_count"], item["city"]))[:200]
+    return sorted(grouped.values(), key=lambda item: (-item["case_count"], item["city"]))
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]], columns: list[str]) -> dict[str, Any]:
@@ -271,7 +355,7 @@ def _write_json(path: Path, data: Any) -> dict[str, Any]:
     return _file_info(path)
 
 
-def _graph_rows(graph_type: str, rows: list[dict[str, Any]], limit: int = 12) -> list[dict[str, Any]]:
+def _graph_rows(graph_type: str, rows: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
     column = GRAPH_COLUMN_MAP.get(graph_type)
     if not column:
         return []
@@ -280,7 +364,9 @@ def _graph_rows(graph_type: str, rows: list[dict[str, Any]], limit: int = 12) ->
         for row in rows:
             label = str(row.get(column) or "Unknown").strip() or "Unknown"
             totals[label] = totals.get(label, 0.0) + float(row.get("volume_size_gb") or 0)
-        sorted_rows = sorted(totals.items(), key=lambda item: (-item[1], item[0]))[:limit]
+        sorted_rows = sorted(totals.items(), key=lambda item: (-item[1], item[0]))
+        if limit:
+            sorted_rows = sorted_rows[:limit]
         return [{"label": label, "value": round(value, 2)} for label, value in sorted_rows]
     return _top_counts(rows, column, limit=limit)
 
@@ -289,8 +375,25 @@ def _safe_filename(value: str) -> str:
     return "".join(ch.lower() if ch.isalnum() else "_" for ch in value).strip("_")
 
 
-def _write_graph_csv(output_dir: Path, stamp: str, safe_name: str, graph_rows: list[dict[str, Any]]) -> dict[str, Any]:
-    path = output_dir / f"cyberlab_graph_{safe_name}_{stamp}.csv"
+def _report_config(
+    config: dict[str, Any],
+    *,
+    title: str | None = None,
+    scope_label: str | None = None,
+    detail_limit: int | None = None,
+) -> dict[str, Any]:
+    value = dict(config)
+    if title:
+        value["report_title"] = title
+    if scope_label:
+        value["scope_label"] = scope_label
+    if detail_limit is not None:
+        value["detail_limit"] = detail_limit
+    return value
+
+
+def _write_graph_csv(output_dir: Path, safe_name: str, graph_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    path = output_dir / f"cyberlab_graph_{safe_name}.csv"
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=["label", "value"])
         writer.writeheader()
@@ -298,20 +401,21 @@ def _write_graph_csv(output_dir: Path, stamp: str, safe_name: str, graph_rows: l
     return _file_info(path)
 
 
-def _write_graph_png(output_dir: Path, stamp: str, graph_type: str, safe_name: str, graph_rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _write_graph_png(output_dir: Path, graph_type: str, safe_name: str, graph_rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     try:
         import matplotlib
 
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-    except ImportError:
-        return None
+    except ImportError as exc:
+        raise RuntimeError(f"PDF export is unavailable because ReportLab could not be loaded: {exc}") from exc
 
-    rows = list(reversed(graph_rows[:12]))
+    rows = list(reversed(graph_rows))
     labels = [str(row["label"]) for row in rows]
     values = [float(row["value"] or 0) for row in rows]
-    height = max(4.8, 0.42 * len(rows) + 1.6)
-    fig, ax = plt.subplots(figsize=(10, height), dpi=140)
+    height = max(4.8, 0.34 * len(rows) + 1.8)
+    width = 11 if len(rows) > 16 else 10
+    fig, ax = plt.subplots(figsize=(width, height), dpi=140)
     fig.patch.set_facecolor("#f6fbff")
     ax.set_facecolor("#ffffff")
     bars = ax.barh(labels, values, color="#2f82d8", edgecolor="#1d5f9f", linewidth=0.6)
@@ -334,7 +438,7 @@ def _write_graph_png(output_dir: Path, stamp: str, graph_type: str, safe_name: s
             color="#172033",
         )
     fig.tight_layout()
-    path = output_dir / f"cyberlab_graph_{safe_name}_{stamp}.png"
+    path = output_dir / f"cyberlab_graph_{safe_name}.png"
     fig.savefig(path, bbox_inches="tight")
     plt.close(fig)
     return _file_info(path)
@@ -519,13 +623,14 @@ def _write_summary_pdf(path: Path, completed_rows: list[dict[str, Any]], progres
     summary = _summary(completed_rows, progress_rows, config)
     page_width = page_size[0] - doc.leftMargin - doc.rightMargin
     elements = []
-    title_block: Any = Paragraph("CyberLab Case Summary", styles["Title"])
+    report_title = str(config.get("report_title") or "CyberLab Case Summary")
+    title_block: Any = Paragraph(report_title, styles["Title"])
     if logo_path().exists():
         try:
             logo = Image(str(logo_path()), width=0.85 * inch, height=0.85 * inch)
-            title_block = Table([[Paragraph("CyberLab Case Summary", styles["Title"]), logo]], colWidths=[page_width - inch, inch])
+            title_block = Table([[Paragraph(report_title, styles["Title"]), logo]], colWidths=[page_width - inch, inch])
         except Exception:
-            title_block = Paragraph("CyberLab Case Summary", styles["Title"])
+            title_block = Paragraph(report_title, styles["Title"])
     elements.extend([
         title_block,
         Paragraph(f"Generated: {summary['generated_at']} / Scope: {_scope_label(config)}", styles["Normal"]),
@@ -575,10 +680,15 @@ def _write_summary_pdf(path: Path, completed_rows: list[dict[str, Any]], progres
         elements.append(_styled_table([["Case #", "Agency", "Priority", "Due", "Status", "Days"], *aging_rows], _fit_widths(page_width, [1.2, 1.8, 0.9, 1.0, 1.0, 0.6]), colors, font_size=8))
         elements.append(Spacer(1, 10))
 
-    recent_cases = completed_rows[: min(30, len(completed_rows))]
+    try:
+        detail_limit = max(1, int(config.get("detail_limit") or 30))
+    except (TypeError, ValueError):
+        detail_limit = 30
+    recent_cases = completed_rows[: min(detail_limit, len(completed_rows))]
     if recent_cases:
         elements.append(PageBreak())
-        elements.append(Paragraph("Recent Completed Cases", styles["Heading2"]))
+        case_section_title = "Completed Cases" if detail_limit >= len(completed_rows) else "Recent Completed Cases"
+        elements.append(Paragraph(case_section_title, styles["Heading2"]))
         recent_table = [["Case #", "Created", "Examiner", "Agency", "Offense", "Device", "Volume"]]
         for row in recent_cases:
             recent_table.append([
@@ -607,11 +717,16 @@ def _write_summary_pdf(path: Path, completed_rows: list[dict[str, Any]], progres
             ])
         elements.append(_styled_table(progress_table, _fit_widths(page_width, [1.1, 1.5, 1.5, 0.8, 1.2, 0.9]), colors, font_size=7.5))
 
-    doc.build(elements)
+    try:
+        doc.build(elements)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to write PDF report '{path}': {exc}") from exc
     return _file_info(path)
 
 
 def _scope_label(config: dict[str, Any]) -> str:
+    if config.get("scope_label"):
+        return str(config["scope_label"])
     if config.get("recent_only"):
         return f"Last {config.get('recent_days') or 31} days"
     return str(config.get("date_range_mode") or "all").replace("_", " ").title()

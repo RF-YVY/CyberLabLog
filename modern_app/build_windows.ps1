@@ -47,6 +47,7 @@ try {
         "--collect-submodules", "fastapi",
         "--collect-submodules", "starlette",
         "--collect-submodules", "pydantic",
+        "--collect-submodules", "reportlab",
         "--hidden-import", "matplotlib.backends.backend_agg",
         "--icon", $IconPath,
         "--exclude-module", "PySide6",

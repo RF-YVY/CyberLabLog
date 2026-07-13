@@ -668,7 +668,10 @@ def add_combo_value(key: str, value: str | None) -> list[str]:
         raise ValueError(f"Unsupported combo key: {key}")
     value = (value or "").strip()
     values = get_combo_values(key)
-    if value and value.lower() not in {item.lower() for item in values}:
+    if value:
+        # A value may already be discoverable from the case that was just saved.
+        # Promote it anyway so newly used entries are immediately visible in Settings.
+        values = [item for item in values if item.lower() != value.lower()]
         values.insert(0, value)
     with connect() as conn:
         hidden = _read_setting_json_list(conn, f"combo_hidden_{key}")
