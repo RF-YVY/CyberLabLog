@@ -20,7 +20,14 @@ import {
   Trash2,
   X,
   Copy,
+  Download,
   Eye,
+  FileCheck2,
+  History,
+  Layers3,
+  LayoutDashboard,
+  PackageSearch,
+  TriangleAlert,
 } from "lucide-react";
 import { createRoot } from "react-dom/client";
 import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
@@ -63,6 +70,18 @@ const blankCase = {
   target_due_date: "",
   workflow_status: "Intake",
 };
+
+function defaultCustomReport() {
+  const today = new Date();
+  const localDate = (value) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+  return {
+    start_date: localDate(new Date(today.getFullYear(), today.getMonth(), 1)),
+    end_date: localDate(today),
+    filter_field: "examiner",
+    filter_value: "",
+    format: "pdf",
+  };
+}
 
 const builtInNavItems = [
   { key: "cases", label: "Cases", required: true },
@@ -107,6 +126,7 @@ const themes = [
   ["cyan-hud", "Cyan HUD"],
   ["ember-focus", "Ember Focus"],
   ["soft-relief", "Soft Relief"],
+  ["soft-relief-dark", "Soft Relief Dark"],
   ["spectrum-glass", "Spectrum Glass"],
   ["electric-azure", "Electric Azure"],
   ["aqua-command", "Aqua Command"],
@@ -406,6 +426,19 @@ function retainedCaseDefaults(form) {
   return stickyCaseFields.reduce((next, key) => ({ ...next, [key]: form[key] || "" }), { ...blankCase });
 }
 
+function loadDraft(mode) {
+  try {
+    const value = JSON.parse(localStorage.getItem(`cyberlab-draft-${mode}`) || "null");
+    return value?.form ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function hasDraftContent(form) {
+  return Boolean(form?.case_number || form?.start_date || form?.model || form?.notes || form?.volume_size_gb);
+}
+
 function Field({ label, name, form, setForm, type = "text", options, suggestions = [] }) {
   const value = form[name] ?? "";
   const listId = suggestions.length ? `${name}-suggestions` : undefined;
@@ -535,6 +568,7 @@ function App() {
   const [caseForm, setCaseForm] = useState(blankCase);
   const [progressForm, setProgressForm] = useState(blankCase);
   const [reportConfig, setReportConfig] = useState(defaultReportConfig);
+  const [customReport, setCustomReport] = useState(defaultCustomReport);
   const [analytics, setAnalytics] = useState({});
   const [analyticsGroup, setAnalyticsGroup] = useState(() => localStorage.getItem("cyberlab-analytics-group") || "core");
   const [mapMarkers, setMapMarkers] = useState([]);
@@ -544,7 +578,7 @@ function App() {
   const [comboValues, setComboValues] = useState({});
   const [logoInfo, setLogoInfo] = useState({ exists: false, path: "" });
   const [markerIconInfo, setMarkerIconInfo] = useState({ exists: false, path: "" });
-  const [appInfo, setAppInfo] = useState({ name: "CyberLab Case Tracker", version: "3.0.4", update_available: false });
+  const [appInfo, setAppInfo] = useState({ name: "CyberLab Case Tracker", version: "3.0.5", update_available: false });
   const [appProfile, setAppProfile] = useState(defaultAppProfile);
   const [mapPreferences, setMapPreferences] = useState(defaultMapPreferences);
   const [browserPreferences, setBrowserPreferences] = useState(defaultBrowserPreferences);
@@ -552,6 +586,16 @@ function App() {
   const [backups, setBackups] = useState({ backup_dir: "", files: [] });
   const [comboEditor, setComboEditor] = useState({ key: "examiner", value: "" });
   const [schedulerStatus, setSchedulerStatus] = useState({ enabled: false, configured: {} });
+  const [dashboard, setDashboard] = useState({ monthly_completed: [], examiner_workload: [] });
+  const [dataQuality, setDataQuality] = useState({ issue_count: 0, issues: [] });
+  const [caseFamilies, setCaseFamilies] = useState([]);
+  const [caseTemplates, setCaseTemplates] = useState([]);
+  const [casesView, setCasesView] = useState("cases");
+  const [reportPreview, setReportPreview] = useState("");
+  const [updateInfo, setUpdateInfo] = useState(null);
+  const [workQueue, setWorkQueue] = useState([]);
+  const [workQueueFilter, setWorkQueueFilter] = useState(() => localStorage.getItem("cyberlab-work-queue") || "all");
+  const [savedDrafts, setSavedDrafts] = useState(() => ({ completed: loadDraft("completed"), progress: loadDraft("progress") }));
   const [showImportWizard, setShowImportWizard] = useState(() => localStorage.getItem("cyberlab-import-wizard-dismissed") !== "1");
 
   useEffect(() => {
@@ -572,6 +616,30 @@ function App() {
   useEffect(() => {
     localStorage.setItem("cyberlab-analytics-group", analyticsGroup);
   }, [analyticsGroup]);
+
+  useEffect(() => {
+    localStorage.setItem("cyberlab-work-queue", workQueueFilter);
+  }, [workQueueFilter]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (!hasDraftContent(caseForm)) return;
+      const draft = { form: caseForm, savedAt: new Date().toISOString() };
+      localStorage.setItem("cyberlab-draft-completed", JSON.stringify(draft));
+      setSavedDrafts((current) => ({ ...current, completed: draft }));
+    }, 650);
+    return () => window.clearTimeout(timer);
+  }, [caseForm]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (!hasDraftContent(progressForm)) return;
+      const draft = { form: progressForm, savedAt: new Date().toISOString() };
+      localStorage.setItem("cyberlab-draft-progress", JSON.stringify(draft));
+      setSavedDrafts((current) => ({ ...current, progress: draft }));
+    }, 650);
+    return () => window.clearTimeout(timer);
+  }, [progressForm]);
 
   useEffect(() => {
     const shutdownUrl = `${API_BASE}/api/runtime/shutdown`;
@@ -602,9 +670,9 @@ function App() {
   async function refresh() {
     setBusy(true);
     try {
-      const [healthData, appInfoData, profileData, uiCustomizationData, mapPreferenceData, browserPreferenceData, themePreferenceData, caseData, progressData, configData, schedulerData, analyticsData, markerData, comboData, logoData, markerIconData, backupData] = await Promise.all([
+      const [healthData, appInfoData, profileData, uiCustomizationData, mapPreferenceData, browserPreferenceData, themePreferenceData, caseData, progressData, configData, schedulerData, analyticsData, markerData, comboData, logoData, markerIconData, backupData, dashboardData, qualityData, familyData, templateData, workQueueData] = await Promise.all([
         api("/api/health"),
-        api("/api/app-info").catch(() => ({ name: "CyberLab Case Tracker", version: "3.0.4", update_available: false })),
+        api("/api/app-info").catch(() => ({ name: "CyberLab Case Tracker", version: "3.0.5", update_available: false })),
         api("/api/settings/json/app_profile").catch(() => ({ value: defaultAppProfile })),
         api("/api/settings/json/ui_customization").catch(() => ({ value: defaultUiCustomization })),
         api("/api/settings/json/map_preferences").catch(() => ({ value: defaultMapPreferences })),
@@ -620,9 +688,14 @@ function App() {
         api("/api/settings/logo"),
         api("/api/settings/marker-icon"),
         api("/api/backups").catch(() => ({ backup_dir: "", files: [] })),
+        api("/api/dashboard").catch(() => ({ monthly_completed: [], examiner_workload: [] })),
+        api("/api/data-quality").catch(() => ({ issue_count: 0, issues: [] })),
+        api("/api/case-families").catch(() => ({ families: [] })),
+        api("/api/templates").catch(() => ({ templates: [] })),
+        api("/api/work-queue").catch(() => ({ rows: [] })),
       ]);
       setHealth(healthData);
-      setAppInfo(appInfoData || { name: "CyberLab Case Tracker", version: "3.0.4", update_available: false });
+      setAppInfo(appInfoData || { name: "CyberLab Case Tracker", version: "3.0.5", update_available: false });
       setAppProfile({ ...defaultAppProfile, ...(profileData.value || {}) });
       setUiCustomization({ ...defaultUiCustomization, ...(uiCustomizationData.value || {}) });
       setMapPreferences({ ...defaultMapPreferences, ...(mapPreferenceData.value || {}) });
@@ -641,6 +714,11 @@ function App() {
       setLogoInfo(logoData || { exists: false, path: "" });
       setMarkerIconInfo(markerIconData || { exists: false, path: "" });
       setBackups(backupData || { backup_dir: "", files: [] });
+      setDashboard(dashboardData || { monthly_completed: [], examiner_workload: [] });
+      setDataQuality(qualityData || { issue_count: 0, issues: [] });
+      setCaseFamilies(familyData.families || []);
+      setCaseTemplates(templateData.templates || []);
+      setWorkQueue(workQueueData.rows || []);
       setStatus("Data refreshed");
     } catch (error) {
       setStatus(`Backend unavailable: ${error.message}`);
@@ -673,6 +751,8 @@ function App() {
         body: JSON.stringify(payloadFromForm(form)),
       });
       await saveComboValues(form);
+      localStorage.removeItem(`cyberlab-draft-${mode}`);
+      setSavedDrafts((current) => ({ ...current, [mode]: null }));
       if (mode === "progress") setProgressForm(isEditing ? blankCase : retainedCaseDefaults(form));
       else setCaseForm(isEditing ? blankCase : retainedCaseDefaults(form));
       setStatus("Case saved");
@@ -752,6 +832,192 @@ function App() {
     setProgressForm(formFromRow(row));
     setActiveTab("progress");
     setStatus(`Editing ${row.case_number || `case ${row.id}`}`);
+  }
+
+  function applyCaseTemplate(template, mode) {
+    const setForm = mode === "progress" ? setProgressForm : setCaseForm;
+    setForm((current) => ({ ...current, ...(template?.payload || {}), id: current.id, case_number: current.case_number }));
+    setStatus(`Applied template: ${template.name}`);
+  }
+
+  async function saveCaseTemplate(form) {
+    const name = window.prompt("Template name");
+    if (!name?.trim()) return;
+    const excluded = new Set(["id", "case_number", "start_date", "end_date", "volume_size_gb", "notes", "created_at", "updated_at"]);
+    const payload = Object.fromEntries(Object.entries(form).filter(([key, value]) => !excluded.has(key) && value !== "" && value !== false));
+    try {
+      await api("/api/templates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), description: "Reusable case-entry defaults", payload }),
+      });
+      setStatus(`Saved template: ${name.trim()}`);
+      await refresh();
+    } catch (error) {
+      setStatus(`Template save failed: ${error.message}`);
+    }
+  }
+
+  async function removeCaseTemplate(template) {
+    if (!window.confirm(`Delete the template "${template.name}"?`)) return;
+    try {
+      await api(`/api/templates/${template.id}`, { method: "DELETE" });
+      setStatus("Template deleted");
+      await refresh();
+    } catch (error) {
+      setStatus(`Template delete failed: ${error.message}`);
+    }
+  }
+
+  async function clearReviewItems(fingerprints) {
+    if (!fingerprints.length) return;
+    try {
+      const result = await api("/api/data-quality/dismiss", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fingerprints }),
+      });
+      setDataQuality(result);
+      setStatus(`Cleared ${fingerprints.length} review item${fingerprints.length === 1 ? "" : "s"}`);
+    } catch (error) {
+      setStatus(`Could not clear review items: ${error.message}`);
+    }
+  }
+
+  async function restoreReviewItems() {
+    try {
+      const result = await api("/api/data-quality/dismissals", { method: "DELETE" });
+      setDataQuality(result);
+      setStatus("Restored cleared review items");
+    } catch (error) {
+      setStatus(`Could not restore review items: ${error.message}`);
+    }
+  }
+
+  async function openReviewIssue(issue) {
+    const record = issue.record_id ? { id: issue.record_id, source: issue.source } : issue.records?.[0];
+    if (!record?.id) return;
+    try {
+      const row = await api(`/api/data-quality/case?source=${encodeURIComponent(record.source)}&record_id=${record.id}`);
+      setSelectedCase({ ...row, status: record.source === "progress" ? "In Progress" : "Completed", _mode: record.source === "progress" ? "progress" : "completed" });
+    } catch (error) {
+      setStatus(`Could not open review case: ${error.message}`);
+    }
+  }
+
+  async function normalizeReviewIssue(issue) {
+    const suggested = issue.variants?.find((value) => value !== value.toLowerCase()) || issue.variants?.[0] || "";
+    const canonical = window.prompt(`Use one value for ${String(issue.field || "field").replaceAll("_", " ")}`, suggested);
+    if (!canonical?.trim()) return;
+    if (!window.confirm(`Replace all listed variants with "${canonical.trim()}" in completed and active cases?`)) return;
+    setBusy(true);
+    try {
+      const result = await api("/api/data-quality/normalize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ field: issue.field, variants: issue.variants, canonical: canonical.trim() }),
+      });
+      setStatus(`Normalized ${result.changed} case value${result.changed === 1 ? "" : "s"}`);
+      await refresh();
+    } catch (error) {
+      setStatus(`Normalization failed: ${error.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function mergeReviewDuplicates(issue) {
+    const records = issue.records || [];
+    if (records.length < 2) return;
+    const choices = records.map((record, index) => `${index + 1}. ${record.source === "progress" ? "Active" : "Completed"} / ${record.examiner || "Unassigned"} / ${record.device_type || "No device"} ${record.model || ""} / ${record.created_at || ""}`).join("\n");
+    const selected = Number(window.prompt(`Choose the record to keep:\n\n${choices}`, "1"));
+    const keeper = records[selected - 1];
+    if (!keeper) return;
+    if (!window.confirm(`Keep record ${selected} and merge non-empty information from the other ${records.length - 1} record(s)? This removes the duplicate records.`)) return;
+    setBusy(true);
+    try {
+      const result = await api("/api/data-quality/merge-duplicates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ case_number: issue.case_number, keep_source: keeper.source, keep_id: keeper.id }),
+      });
+      setStatus(`Merged ${result.removed} duplicate record${result.removed === 1 ? "" : "s"}`);
+      await refresh();
+    } catch (error) {
+      setStatus(`Duplicate merge failed: ${error.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function restoreDraft(mode) {
+    const draft = savedDrafts[mode];
+    if (!draft?.form) return;
+    if (mode === "progress") setProgressForm({ ...blankCase, ...draft.form });
+    else setCaseForm({ ...blankCase, ...draft.form });
+    setStatus("Recovered autosaved draft");
+  }
+
+  function discardDraft(mode) {
+    localStorage.removeItem(`cyberlab-draft-${mode}`);
+    setSavedDrafts((current) => ({ ...current, [mode]: null }));
+    setStatus("Autosaved draft discarded");
+  }
+
+  async function startNextSubcase(row, mode = "completed") {
+    try {
+      const result = await api(`/api/case-family/next?case_number=${encodeURIComponent(row.case_number || "")}`);
+      const next = {
+        ...formFromRow(row),
+        id: undefined,
+        case_number: result.case_number,
+        start_date: "",
+        end_date: "",
+        volume_size_gb: "",
+        device_type: "",
+        model: "",
+        os: "",
+        notes: "",
+      };
+      if (mode === "progress") {
+        setProgressForm(next);
+        setActiveTab("progress");
+      } else {
+        setCaseForm(next);
+        setActiveTab("new");
+      }
+      setSelectedCase(null);
+      setStatus(`Ready for ${result.case_number}`);
+    } catch (error) {
+      setStatus(`Could not create next subcase: ${error.message}`);
+    }
+  }
+
+  async function checkPortableUpdate() {
+    setBusy(true);
+    try {
+      const result = await api("/api/update/info");
+      setUpdateInfo(result);
+      setStatus(result.update_available ? `Update ${result.version} is available` : "Application is current");
+    } catch (error) {
+      setStatus(`Update check failed: ${error.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function downloadPortableUpdate() {
+    if (!window.confirm("Download the verified portable update beside this application?")) return;
+    setBusy(true);
+    try {
+      const result = await api("/api/update/download", { method: "POST" });
+      setUpdateInfo((current) => ({ ...(current || {}), ...result }));
+      setStatus(result.downloaded ? `Update saved: ${result.path}` : result.message);
+    } catch (error) {
+      setStatus(`Update download failed: ${error.message}`);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function saveReportConfig(event) {
@@ -982,7 +1248,51 @@ function App() {
     }
   }
 
+  async function createEncryptedBackup() {
+    const password = window.prompt("Encrypted backup password (minimum 8 characters)");
+    if (!password) return;
+    const confirmation = window.prompt("Confirm encrypted backup password");
+    if (confirmation !== password) {
+      setStatus("Backup passwords did not match");
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await api("/api/backups/encrypted", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      setStatus(`Encrypted backup created: ${result.backup?.name || "complete"}`);
+      setBackups(await api("/api/backups"));
+    } catch (error) {
+      setStatus(`Encrypted backup failed: ${error.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function restoreBackup(path) {
+    if (String(path).toLowerCase().endsWith(".clbackup")) {
+      const password = window.prompt("Password for this encrypted backup");
+      if (!password) return;
+      if (!window.confirm("Restore this encrypted portable backup? A safety database backup will be created first.")) return;
+      setBusy(true);
+      try {
+        await api("/api/backups/encrypted/restore", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path, password }),
+        });
+        setStatus("Encrypted backup verified and restored");
+        await refresh();
+      } catch (error) {
+        setStatus(`Encrypted restore failed: ${error.message}`);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     if (!window.confirm("Restore this backup database? The current database will be backed up first.")) {
       return;
     }
@@ -1055,6 +1365,36 @@ function App() {
         [reportType]: value,
       },
     }));
+  }
+
+  function customReportUrl({ download = false, format = customReport.format } = {}) {
+    const params = new URLSearchParams({
+      start_date: customReport.start_date,
+      end_date: customReport.end_date,
+      filter_field: customReport.filter_field,
+      filter_value: customReport.filter_value,
+      format,
+      download: download ? "true" : "false",
+      t: String(Date.now()),
+    });
+    return `${API_BASE}/api/reports/custom?${params}`;
+  }
+
+  function previewCustomReport() {
+    if (!customReport.start_date || !customReport.end_date) {
+      setStatus("Choose a start and end date for the custom report");
+      return;
+    }
+    setReportPreview(customReportUrl({ format: "pdf" }));
+  }
+
+  function exportCustomReport() {
+    if (!customReport.start_date || !customReport.end_date) {
+      setStatus("Choose a start and end date for the custom report");
+      return;
+    }
+    window.open(customReportUrl({ download: true }), "_blank", "noopener");
+    setStatus(`Preparing custom ${customReport.format.toUpperCase()} report`);
   }
 
   async function chooseOutputFolder(reportType = null, label = "Output Folder") {
@@ -1172,6 +1512,22 @@ function App() {
   const totalVolume = useMemo(() => {
     return Number(stats.total_volume_gb || 0);
   }, [stats.total_volume_gb]);
+  const focusedActiveRows = useMemo(() => {
+    const rows = workQueue.length ? workQueue : inProgress.rows;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const daysUntil = (value) => {
+      if (!value) return null;
+      const date = new Date(`${value}T00:00:00`);
+      return Number.isNaN(date.getTime()) ? null : Math.round((date - today) / 86400000);
+    };
+    if (workQueueFilter === "due_soon") return rows.filter((row) => daysUntil(row.target_due_date) !== null && daysUntil(row.target_due_date) >= 0 && daysUntil(row.target_due_date) <= 7);
+    if (workQueueFilter === "overdue") return rows.filter((row) => daysUntil(row.target_due_date) !== null && daysUntil(row.target_due_date) < 0);
+    if (workQueueFilter === "awaiting_evidence") return rows.filter((row) => Number(row.evidence_count || 0) === 0);
+    if (workQueueFilter === "ready_close") return rows.filter((row) => /ready|complete/i.test(String(row.workflow_status || "")) || Boolean(row.fpr_complete));
+    if (workQueueFilter === "mine") return rows.filter((row) => String(row.examiner || "").trim().toLowerCase() === String(appProfile.name || "").trim().toLowerCase());
+    return rows;
+  }, [appProfile.name, inProgress.rows, workQueue, workQueueFilter]);
   const activeAnalyticsGroup = useMemo(() => {
     return analyticsGraphGroups.find(([key]) => key === analyticsGroup) || analyticsGraphGroups[0];
   }, [analyticsGroup]);
@@ -1200,7 +1556,7 @@ function App() {
       .map((tab) => [`custom:${tab.key}`, tab.label || tab.key]);
     return [...builtIns, ...customTabs];
   }, [uiCustomization]);
-  const appVersionLabel = `v${appInfo.version || "3.0.4"}`;
+  const appVersionLabel = `v${appInfo.version || "3.0.5"}`;
 
   useEffect(() => {
     if (navItems.length && !navItems.some(([key]) => key === activeTab)) {
@@ -1392,21 +1748,33 @@ function App() {
           {activeTab === "cases" && (
             <>
               <Toolbar search={search} setSearch={setSearch} sort={sort} setSort={setSort} refresh={refresh} busy={busy} />
-              <CaseTable
-                rows={cases.rows}
-                total={cases.total}
-                onView={(row) => setSelectedCase({ ...row, status: "Completed" })}
-                onEdit={editCompletedCase}
-                onDuplicate={(row) => duplicateCase(row)}
-                onDelete={(id) => removeCase(id)}
-                uiCustomization={uiCustomization}
-              />
+              <OperationalOverview dashboard={dashboard} quality={dataQuality} />
+              <div className="segmented-control cases-view-control" aria-label="Case view">
+                <button className={casesView === "cases" ? "active" : ""} onClick={() => setCasesView("cases")}><Database size={15} /> Cases</button>
+                <button className={casesView === "families" ? "active" : ""} onClick={() => setCasesView("families")}><Layers3 size={15} /> Families</button>
+                <button className={casesView === "quality" ? "active" : ""} onClick={() => setCasesView("quality")}><FileCheck2 size={15} /> Review <span>{dataQuality.issue_count || 0}</span></button>
+              </div>
+              {casesView === "cases" && (
+                <CaseTable
+                  rows={cases.rows}
+                  total={cases.total}
+                  onView={(row) => setSelectedCase({ ...row, status: "Completed", _mode: "completed" })}
+                  onEdit={editCompletedCase}
+                  onDuplicate={(row) => duplicateCase(row)}
+                  onDelete={(id) => removeCase(id)}
+                  uiCustomization={uiCustomization}
+                />
+              )}
+              {casesView === "families" && <CaseFamilyList families={caseFamilies} onNext={(row) => startNextSubcase(row)} />}
+              {casesView === "quality" && <DataQualityList quality={dataQuality} onDismiss={clearReviewItems} onRestore={restoreReviewItems} onOpen={openReviewIssue} onNormalize={normalizeReviewIssue} onMerge={mergeReviewDuplicates} />}
             </>
           )}
 
           {activeTab === "new" && (
             <section className="content-pad">
               <h2><Plus size={18} /> {caseForm.id ? "Edit Completed Case" : "New Completed Case"}</h2>
+              {savedDrafts.completed && !hasDraftContent(caseForm) && <DraftRecoveryBanner draft={savedDrafts.completed} onRestore={() => restoreDraft("completed")} onDiscard={() => discardDraft("completed")} />}
+              <CaseTemplateBar templates={caseTemplates} form={caseForm} onApply={(template) => applyCaseTemplate(template, "completed")} onSave={() => saveCaseTemplate(caseForm)} onDelete={removeCaseTemplate} />
               <CaseForm
                 form={caseForm}
                 setForm={setCaseForm}
@@ -1425,6 +1793,8 @@ function App() {
               <div className="split-content">
                 <div className="content-pad">
                   <h2><Plus size={18} /> {progressForm.id ? "Edit In-Progress Case" : "Add In-Progress Case"}</h2>
+                  {savedDrafts.progress && !hasDraftContent(progressForm) && <DraftRecoveryBanner draft={savedDrafts.progress} onRestore={() => restoreDraft("progress")} onDiscard={() => discardDraft("progress")} />}
+                  <CaseTemplateBar templates={caseTemplates} form={progressForm} onApply={(template) => applyCaseTemplate(template, "progress")} onSave={() => saveCaseTemplate(progressForm)} onDelete={removeCaseTemplate} />
                   <CaseForm
                     form={progressForm}
                     setForm={setProgressForm}
@@ -1437,13 +1807,24 @@ function App() {
                   />
                 </div>
                 <div className="content-pad compact-list">
-                  <h2>Active Cases</h2>
-                  {inProgress.rows.map((row) => (
+                  <div className="work-queue-head">
+                    <h2>Active Cases</h2>
+                    <select value={workQueueFilter} onChange={(event) => setWorkQueueFilter(event.target.value)} aria-label="Focused work queue">
+                      <option value="all">All active</option>
+                      <option value="due_soon">Due within 7 days</option>
+                      <option value="overdue">Overdue</option>
+                      <option value="awaiting_evidence">Awaiting evidence</option>
+                      <option value="ready_close">Ready to close</option>
+                      <option value="mine">My active cases</option>
+                    </select>
+                  </div>
+                  {focusedActiveRows.map((row) => (
                     <article className="mini-card" key={row.id}>
                       <strong>{formatValue(row.case_number)}</strong>
                       <span>{formatValue(row.agency)} / {formatValue(row.offense_type)}</span>
                       <small>{formatValue(row.priority)} / {formatValue(row.workflow_status)}</small>
                       <div className="mini-actions">
+                        <button onClick={() => setSelectedCase({ ...row, status: "In Progress", _mode: "progress" })}><Eye size={15} /> View</button>
                         <button onClick={() => editInProgressCase(row)}><Pencil size={15} /> Edit</button>
                         <button onClick={() => duplicateCase(row, "progress")}><Copy size={15} /> Duplicate</button>
                         <button onClick={() => completeCase(row.id)}><CheckCircle2 size={15} /> Complete</button>
@@ -1451,7 +1832,7 @@ function App() {
                       </div>
                     </article>
                   ))}
-                  {!inProgress.rows.length && <p className="empty-copy">No in-progress cases loaded.</p>}
+                  {!focusedActiveRows.length && <p className="empty-copy">No active cases match this view.</p>}
                 </div>
               </div>
             </section>
@@ -1459,6 +1840,23 @@ function App() {
 
           {activeTab === "reports" && (
             <section className="content-pad report-grid">
+              <form className="custom-report-builder" onSubmit={(event) => { event.preventDefault(); exportCustomReport(); }}>
+                <div className="custom-report-heading">
+                  <div><h2><FileCheck2 size={18} /> Custom Workload Report</h2><p className="muted">Completed devices whose End Date falls within the selected period.</p></div>
+                  <button className="ghost-action compact" type="button" onClick={() => setCustomReport(defaultCustomReport())}>Current month</button>
+                </div>
+                <div className="custom-report-fields">
+                  <label className="field"><span>From</span><input type="date" value={customReport.start_date} onChange={(event) => setCustomReport((current) => ({ ...current, start_date: event.target.value }))} /></label>
+                  <label className="field"><span>Through</span><input type="date" value={customReport.end_date} onChange={(event) => setCustomReport((current) => ({ ...current, end_date: event.target.value }))} /></label>
+                  <label className="field"><span>Report By</span><select value={customReport.filter_field} onChange={(event) => setCustomReport((current) => ({ ...current, filter_field: event.target.value, filter_value: "" }))}><option value="examiner">Examiner</option><option value="investigator">Investigator</option><option value="agency">Agency</option></select></label>
+                  <label className="field"><span>{customReport.filter_field === "agency" ? "Agency" : customReport.filter_field === "investigator" ? "Investigator" : "Examiner"}</span><select value={customReport.filter_value} onChange={(event) => setCustomReport((current) => ({ ...current, filter_value: event.target.value }))}><option value="">All</option>{(comboValues[customReport.filter_field] || []).map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+                  <label className="field"><span>Format</span><select value={customReport.format} onChange={(event) => setCustomReport((current) => ({ ...current, format: event.target.value }))}><option value="pdf">PDF</option><option value="csv">CSV</option></select></label>
+                </div>
+                <div className="form-actions custom-report-actions">
+                  <button className="ghost-action" type="button" onClick={previewCustomReport}><Eye size={16} /> Preview PDF</button>
+                  <button className="primary-action inline" type="submit"><Download size={16} /> Export {customReport.format.toUpperCase()}</button>
+                </div>
+              </form>
               <form onSubmit={saveReportConfig}>
                 <h2><FileText size={18} /> Automated Reports</h2>
                 <div className="form-grid two-col">
@@ -1574,6 +1972,7 @@ function App() {
                 <div className="form-actions">
                   <button className="primary-action inline" type="submit" disabled={busy}><Save size={17} /> Save Settings</button>
                   <button className="ghost-action" type="button" onClick={runNativeExports} disabled={busy}><Sparkles size={17} /> Run Export Now</button>
+                  <button className="ghost-action" type="button" onClick={() => setReportPreview(`${API_BASE}/api/reports/preview?report_type=all_cases_pdf&t=${Date.now()}`)} disabled={busy}><Eye size={17} /> Preview PDF</button>
                   <button className="ghost-action" type="button" onClick={() => loadOutputFiles()} disabled={!reportConfig.output_dir}><FolderOpen size={17} /> View Output</button>
                 </div>
               </form>
@@ -1880,6 +2279,7 @@ function App() {
                   <p className="muted">Backups are stored in {backups.backup_dir || "app_data/backups"}.</p>
                   <div className="form-actions">
                     <button className="primary-action inline" type="button" onClick={createBackup} disabled={busy}><Database size={16} /> Backup Now</button>
+                    <button className="ghost-action" type="button" onClick={createEncryptedBackup} disabled={busy}><ShieldCheck size={16} /> Encrypted Portable</button>
                     <button className="ghost-action" type="button" onClick={createSupportBundle} disabled={busy}><FileText size={16} /> Support Bundle</button>
                   </div>
                   <div className="backup-list">
@@ -1893,6 +2293,23 @@ function App() {
                       </article>
                     ))}
                     {!(backups.files || []).length && <p className="empty-copy">No backups found.</p>}
+                  </div>
+                </div>
+                <div className="profile-card update-panel">
+                  <h3>Portable Application Update</h3>
+                  <p className="muted">Checks the GitHub release and downloads a verified single EXE beside the current application. No installer or administrator access is required.</p>
+                  {updateInfo && (
+                    <dl className="config-list compact-config">
+                      <dt>Installed</dt><dd>v{updateInfo.current_version || appInfo.version}</dd>
+                      <dt>Latest</dt><dd>{updateInfo.version || "Unavailable"}</dd>
+                      <dt>Status</dt><dd>{updateInfo.update_available ? "Update available" : "Current"}</dd>
+                      {updateInfo.path && <><dt>Saved</dt><dd>{updateInfo.path}</dd></>}
+                      {updateInfo.sha256 && <><dt>SHA-256</dt><dd className="hash-value">{updateInfo.sha256}</dd></>}
+                    </dl>
+                  )}
+                  <div className="form-actions">
+                    <button className="ghost-action" type="button" onClick={checkPortableUpdate} disabled={busy}><RefreshCw size={16} /> Check</button>
+                    {updateInfo?.update_available && <button className="primary-action inline" type="button" onClick={downloadPortableUpdate} disabled={busy}><Download size={16} /> Download EXE</button>}
                   </div>
                 </div>
                 <div className="profile-card">
@@ -1931,16 +2348,190 @@ function App() {
         <CaseDetailModal
           row={selectedCase}
           onClose={() => setSelectedCase(null)}
-          onEdit={() => editCompletedCase(selectedCase)}
-          onDuplicate={() => duplicateCase(selectedCase)}
+          onEdit={() => selectedCase._mode === "progress" ? editInProgressCase(selectedCase) : editCompletedCase(selectedCase)}
+          onDuplicate={() => duplicateCase(selectedCase, selectedCase._mode === "progress" ? "progress" : "completed")}
           uiCustomization={uiCustomization}
+          api={api}
+          onNextSubcase={() => startNextSubcase(selectedCase, selectedCase._mode === "progress" ? "progress" : "completed")}
+          onChanged={refresh}
         />
       )}
+      {reportPreview && <ReportPreviewModal url={reportPreview} onClose={() => setReportPreview("")} />}
     </main>
   );
 }
 
-function CaseDetailModal({ row, onClose, onEdit, onDuplicate, uiCustomization = defaultUiCustomization }) {
+function OperationalOverview({ dashboard, quality }) {
+  const monthly = dashboard.monthly_completed || [];
+  const maxMonthly = Math.max(1, ...monthly.map((item) => Number(item.value || 0)));
+  return (
+    <details className="operations-panel">
+      <summary><LayoutDashboard size={16} /> Operational snapshot <span>{dashboard.overdue_count || 0} overdue / {quality.issue_count || 0} review items</span></summary>
+      <div className="operations-body">
+        <dl className="operations-metrics">
+          <div><dt>Case families</dt><dd>{dashboard.family_count || 0}</dd></div>
+          <div><dt>Evidence items</dt><dd>{dashboard.evidence_count || 0}</dd></div>
+          <div><dt>Active 30+ days</dt><dd>{dashboard.active_aging_count || 0}</dd></div>
+          <div><dt>Avg. turnaround</dt><dd>{dashboard.average_turnaround_days || 0} days</dd></div>
+        </dl>
+        <div className="monthly-strip" aria-label="Completed cases by month">
+          {monthly.map((item) => <i key={item.label} style={{ height: `${Math.max(8, Number(item.value || 0) / maxMonthly * 100)}%` }} title={`${item.label}: ${item.value}`} />)}
+          {!monthly.length && <span>No monthly history available.</span>}
+        </div>
+      </div>
+    </details>
+  );
+}
+
+function CaseTemplateBar({ templates, onApply, onSave, onDelete }) {
+  const [selected, setSelected] = useState("");
+  const template = templates.find((item) => String(item.id) === selected);
+  return (
+    <div className="template-bar">
+      <PackageSearch size={17} />
+      <select value={selected} onChange={(event) => setSelected(event.target.value)} aria-label="Case template">
+        <option value="">Case template</option>
+        {templates.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+      </select>
+      <button className="ghost-action compact" type="button" disabled={!template} onClick={() => onApply(template)}>Apply</button>
+      <button className="ghost-action compact" type="button" onClick={onSave}><Save size={15} /> Save current</button>
+      {template && <button className="icon-button" type="button" onClick={() => onDelete(template)} title="Delete template"><Trash2 size={15} /></button>}
+    </div>
+  );
+}
+
+function DraftRecoveryBanner({ draft, onRestore, onDiscard }) {
+  return (
+    <div className="draft-recovery">
+      <div><Save size={16} /><span><strong>Unfinished draft available</strong><small>Autosaved {draft.savedAt ? new Date(draft.savedAt).toLocaleString() : "recently"}</small></span></div>
+      <div><button className="primary-action inline" type="button" onClick={onRestore}>Restore</button><button className="ghost-action compact" type="button" onClick={onDiscard}>Discard</button></div>
+    </div>
+  );
+}
+
+function CaseFamilyList({ families, onNext }) {
+  return (
+    <div className="family-list">
+      <div className="list-heading"><span>{families.length} case families</span><span>Grouped by base case number</span></div>
+      {families.map((family) => (
+        <article className="family-row" key={family.base_case_number}>
+          <div><strong>{family.base_case_number}</strong><span>{family.device_count} devices / {family.completed_count} completed / {family.active_count} active</span></div>
+          <div className="family-volume">{formatVolume(family.total_volume_gb)}</div>
+          <button className="icon-button" type="button" onClick={() => window.open(`${API_BASE}/api/case-family/report?case_number=${encodeURIComponent(family.base_case_number)}`, "_blank", "noopener")} title="Open case-family PDF"><FileText size={15} /></button>
+          <button className="ghost-action compact" type="button" onClick={() => onNext(family.members?.[family.members.length - 1] || { case_number: family.base_case_number })}><Plus size={15} /> Next device</button>
+        </article>
+      ))}
+      {!families.length && <p className="empty-copy content-pad">No multi-device case families found yet.</p>}
+    </div>
+  );
+}
+
+function DataQualityList({ quality, onDismiss, onRestore, onOpen, onNormalize, onMerge }) {
+  const [selected, setSelected] = useState([]);
+  const issues = quality.issues || [];
+  const visibleFingerprints = issues.map((issue) => issue.fingerprint);
+  const allSelected = Boolean(issues.length) && visibleFingerprints.every((fingerprint) => selected.includes(fingerprint));
+
+  useEffect(() => {
+    setSelected((current) => current.filter((fingerprint) => visibleFingerprints.includes(fingerprint)));
+  }, [quality.issue_count]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function toggleSelected(fingerprint, checked) {
+    setSelected((current) => checked ? [...new Set([...current, fingerprint])] : current.filter((value) => value !== fingerprint));
+  }
+
+  return (
+    <div className="quality-list">
+      <div className="quality-toolbar">
+        <label className="quality-select-all">
+          <input type="checkbox" checked={allSelected} disabled={!issues.length} onChange={(event) => setSelected(event.target.checked ? visibleFingerprints : [])} />
+          Select all
+        </label>
+        <div className="quality-summary">
+          <span className="severity high">{quality.high_count || 0} high</span>
+          <span className="severity medium">{quality.medium_count || 0} medium</span>
+          <span className="severity low">{quality.low_count || 0} low</span>
+        </div>
+        <button className="ghost-action compact" type="button" disabled={!selected.length} onClick={() => onDismiss(selected)}><CheckCircle2 size={15} /> Clear selected ({selected.length})</button>
+        {quality.dismissed_count > 0 && <button className="ghost-action compact" type="button" onClick={onRestore}><RefreshCw size={15} /> Restore cleared ({quality.dismissed_count})</button>}
+      </div>
+      {issues.map((issue, index) => (
+        <article className="quality-row" key={`${issue.case_number}-${issue.type}-${index}`}>
+          <input type="checkbox" checked={selected.includes(issue.fingerprint)} onChange={(event) => toggleSelected(issue.fingerprint, event.target.checked)} aria-label={`Select ${issue.message}`} />
+          <TriangleAlert size={16} />
+          <div><strong>{issue.message}</strong><span>{issue.case_number || "All records"} / {issue.source}</span></div>
+          <span className={`severity ${issue.severity}`}>{issue.severity}</span>
+          <div className="review-actions">
+            {(issue.record_id || issue.records?.length) && <button className="icon-button" type="button" onClick={() => onOpen(issue)} title="Open affected case" aria-label={`Open ${issue.case_number}`}><Eye size={14} /></button>}
+            {issue.type === "inconsistent" && <button className="icon-button" type="button" onClick={() => onNormalize(issue)} title="Normalize these values" aria-label={`Normalize ${issue.field}`}><Sparkles size={14} /></button>}
+            {issue.type === "duplicate" && <button className="icon-button" type="button" onClick={() => onMerge(issue)} title="Merge duplicate records" aria-label={`Merge duplicates for ${issue.case_number}`}><Layers3 size={14} /></button>}
+            <button className="icon-button" type="button" onClick={() => onDismiss([issue.fingerprint])} title="Clear review item" aria-label={`Clear ${issue.message}`}><X size={14} /></button>
+          </div>
+        </article>
+      ))}
+      {!quality.issue_count && <p className="empty-copy content-pad">No data-quality issues detected.</p>}
+    </div>
+  );
+}
+
+function ReportPreviewModal({ url, onClose }) {
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+      <section className="report-preview-modal panel-enter" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+        <header><div><h2>Report Preview</h2><p className="muted">Generated from current data without writing to the export folders.</p></div><button className="icon-button" onClick={onClose} title="Close"><X size={18} /></button></header>
+        <iframe src={url} title="Generated report preview" />
+      </section>
+    </div>
+  );
+}
+
+function CaseDetailModal({ row, onClose, onEdit, onDuplicate, onNextSubcase, onChanged, api, uiCustomization = defaultUiCustomization }) {
+  const [detailTab, setDetailTab] = useState("overview");
+  const [evidence, setEvidence] = useState([]);
+  const [audit, setAudit] = useState([]);
+  const [family, setFamily] = useState({ members: [] });
+  const [showEvidenceForm, setShowEvidenceForm] = useState(false);
+  const [evidenceForm, setEvidenceForm] = useState({ case_number: row.case_number || "", evidence_number: "", item_type: "", serial_number: "", storage_location: "", received_date: "", status: "In Custody", description: "" });
+
+  async function loadDetails() {
+    const number = encodeURIComponent(row.case_number || "");
+    const [evidenceData, auditData, familyData] = await Promise.all([
+      api(`/api/evidence?case_number=${number}`).catch(() => ({ evidence: [] })),
+      api(`/api/audit?case_number=${number}`).catch(() => ({ events: [] })),
+      api(`/api/case-family?case_number=${number}`).catch(() => ({ members: [] })),
+    ]);
+    setEvidence(evidenceData.evidence || []);
+    setAudit(auditData.events || []);
+    setFamily(familyData || { members: [] });
+  }
+
+  useEffect(() => { loadDetails(); }, [row.case_number]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function addEvidence(event) {
+    event.preventDefault();
+    await api("/api/evidence", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(evidenceForm) });
+    setEvidenceForm((current) => ({ ...current, evidence_number: "", item_type: "", serial_number: "", storage_location: "", received_date: "", description: "" }));
+    setShowEvidenceForm(false);
+    await loadDetails();
+    onChanged?.();
+  }
+
+  async function addCustody(item) {
+    const eventType = window.prompt("Custody event (Received, Transferred, Examined, Returned)", "Transferred");
+    if (!eventType?.trim()) return;
+    const person = window.prompt("Person receiving or handling the evidence", "") || "";
+    const location = window.prompt("Location", item.storage_location || "") || "";
+    await api(`/api/evidence/${item.id}/custody`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event_type: eventType.trim(), person, location }) });
+    await loadDetails();
+  }
+
+  async function removeEvidence(item) {
+    if (!window.confirm(`Delete evidence ${item.evidence_number || item.item_type || "item"}?`)) return;
+    await api(`/api/evidence/${item.id}?case_number=${encodeURIComponent(row.case_number || "")}`, { method: "DELETE" });
+    await loadDetails();
+    onChanged?.();
+  }
+
   const builtInFields = [
     ["Status", "Status", row.status],
     ["case_number", "Case #", row.case_number],
@@ -1978,24 +2569,54 @@ function CaseDetailModal({ row, onClose, onEdit, onDuplicate, uiCustomization = 
           </div>
           <button className="icon-button" onClick={onClose} title="Close"><X size={18} /></button>
         </header>
-        <div className="detail-grid">
-          {fields.map(([label, value]) => (
-            <div key={label}>
-              <span>{label}</span>
-              <strong>{formatValue(value)}</strong>
-            </div>
-          ))}
+        <div className="modal-tabs segmented-control">
+          <button className={detailTab === "overview" ? "active" : ""} onClick={() => setDetailTab("overview")}>Overview</button>
+          <button className={detailTab === "evidence" ? "active" : ""} onClick={() => setDetailTab("evidence")}>Evidence <span>{evidence.length}</span></button>
+          <button className={detailTab === "family" ? "active" : ""} onClick={() => setDetailTab("family")}>Family <span>{family.device_count || 0}</span></button>
+          <button className={detailTab === "history" ? "active" : ""} onClick={() => setDetailTab("history")}><History size={14} /> History</button>
         </div>
-        {fieldVisible(uiCustomization, "notes", "progress") && (
-          <div className="notes-panel">
-            <span>{fieldLabel(uiCustomization, "notes", "Notes")}</span>
-            <p>{formatValue(row.notes)}</p>
-          </div>
+        <div className="case-modal-body">
+          {detailTab === "overview" && <>
+            <div className="detail-grid">
+              {fields.map(([label, value]) => <div key={label}><span>{label}</span><strong>{formatValue(value)}</strong></div>)}
+            </div>
+            {fieldVisible(uiCustomization, "notes", "progress") && <div className="notes-panel"><span>{fieldLabel(uiCustomization, "notes", "Notes")}</span><p>{formatValue(row.notes)}</p></div>}
+          </>}
+          {detailTab === "evidence" && <div className="evidence-workspace">
+            <div className="section-action-row"><p className="muted">Evidence and chain-of-custody activity for this case.</p><button className="primary-action inline" onClick={() => setShowEvidenceForm((value) => !value)}><Plus size={15} /> Add evidence</button></div>
+            {showEvidenceForm && <form className="evidence-form" onSubmit={addEvidence}>
+              <Field label="Evidence #" name="evidence_number" form={evidenceForm} setForm={setEvidenceForm} />
+              <Field label="Item Type" name="item_type" form={evidenceForm} setForm={setEvidenceForm} />
+              <Field label="Serial Number" name="serial_number" form={evidenceForm} setForm={setEvidenceForm} />
+              <Field label="Storage" name="storage_location" form={evidenceForm} setForm={setEvidenceForm} />
+              <Field label="Received" name="received_date" type="date" form={evidenceForm} setForm={setEvidenceForm} />
+              <Field label="Status" name="status" form={evidenceForm} setForm={setEvidenceForm} options={["In Custody", "Examining", "Returned", "Released"]} />
+              <div className="form-actions"><button className="primary-action inline" type="submit"><Save size={15} /> Save</button><button className="ghost-action" type="button" onClick={() => setShowEvidenceForm(false)}>Cancel</button></div>
+            </form>}
+            {evidence.map((item) => <article className="evidence-item" key={item.id}>
+              <div className="evidence-heading"><div><strong>{item.evidence_number || "Unnumbered item"}</strong><span>{formatValue(item.item_type)} / {formatValue(item.serial_number)}</span></div><span className="status-tag">{item.status}</span></div>
+              <p>{item.description || item.storage_location || "No description recorded."}</p>
+              <div className="custody-timeline">{(item.custody_events || []).map((event) => <div key={event.id}><i /><span><b>{event.event_type}</b> {event.person || ""}<small>{event.event_at} {event.location ? `/ ${event.location}` : ""}</small></span></div>)}</div>
+              <div className="form-actions"><button className="ghost-action compact" onClick={() => addCustody(item)}><History size={14} /> Custody event</button><button className="icon-button" onClick={() => removeEvidence(item)} title="Delete evidence"><Trash2 size={14} /></button></div>
+            </article>)}
+            {!evidence.length && !showEvidenceForm && <p className="empty-copy">No evidence items recorded.</p>}
+          </div>}
+          {detailTab === "family" && <div className="family-detail">
+            <div className="section-action-row"><div><strong>{family.base_case_number || row.case_number}</strong><p className="muted">{family.device_count || 1} related devices / {formatVolume(family.total_volume_gb || row.volume_size_gb)}</p></div><div className="form-actions"><button className="ghost-action" onClick={() => window.open(`${API_BASE}/api/case-family/report?case_number=${encodeURIComponent(family.base_case_number || row.case_number)}`, "_blank", "noopener")}><FileText size={15} /> Family PDF</button><button className="primary-action inline" onClick={onNextSubcase}><Plus size={15} /> Next device</button></div></div>
+            {(family.members || []).map((member) => <article key={`${member.source}-${member.id}`}><strong>{member.case_number}</strong><span>{formatValue(member.device_type)} / {formatValue(member.model)}</span><span>{member.source}</span></article>)}
+          </div>}
+          {detailTab === "history" && <div className="audit-timeline">
+            {audit.map((event) => <article key={event.id}><i /><div><strong>{event.summary || event.action}</strong><span>{event.created_at} / {event.actor || "Local user"}</span>{event.changes && Object.keys(event.changes).length > 0 && <small>{Object.keys(event.changes).join(", ")}</small>}</div></article>)}
+            {!audit.length && <p className="empty-copy">No recorded history for this case.</p>}
+          </div>}
+        </div>
+        {detailTab === "overview" && (
+          <footer className="form-actions">
+            <button className="primary-action" onClick={onEdit}><Pencil size={16} /> Edit</button>
+            <button className="ghost-action" onClick={onDuplicate}><Copy size={16} /> Duplicate</button>
+            <button className="ghost-action" onClick={onNextSubcase}><Layers3 size={16} /> Next device</button>
+          </footer>
         )}
-        <footer className="form-actions">
-          <button className="primary-action" onClick={onEdit}><Pencil size={16} /> Edit</button>
-          <button className="ghost-action" onClick={onDuplicate}><Copy size={16} /> Duplicate</button>
-        </footer>
       </section>
     </div>
   );

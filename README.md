@@ -6,15 +6,16 @@ Download the EXE from Releases, place it in a folder on your PC, and create a de
 
 ![CyberLab Case Tracker modern browser UI](docs/images/cyberlab-modern-browser-ui.png)
 
-## Current Release: v3.0.4
+## Current Release: v3.0.5
 
-- Adds six interface themes: Soft Relief, Spectrum Glass, Electric Azure, Aqua Command, Violet Flow, and Carbon Intelligence.
-- Shows every saved dropdown value in Settings and promotes newly used values for immediate editing or deletion.
-- Restores all-time PDF reports, graph statistics, and areas-served map output while retaining date-scoped reports.
-- Replaces existing report, graph, and map files during export so shared OneDrive folders stay current without accumulating duplicates.
-- Adds Windows folder selection for the main and per-report output locations.
-- Prevents report generation during ordinary application startup; exports run manually or at the configured schedule time.
-- Includes packaged ReportLab dependencies and PDF-generation corrections for the single-EXE build.
+- Adds custom workload reports filtered by date range and Examiner, Investigator, or Agency, with local PDF and CSV export.
+- Adds case-family PDFs combining every related device, volume totals, evidence inventory, custody history, and individual results.
+- Adds evidence inventory, chain-of-custody timelines, reusable case templates, case history, and automatic next-device numbering.
+- Makes review items actionable by opening affected cases, normalizing inconsistent values, and merging duplicate records.
+- Adds autosaved case drafts and focused active-case views for due, overdue, awaiting-evidence, ready-to-close, and assigned work.
+- Adds password-protected portable backups containing the database and application assets with integrity verification during restore.
+- Adds Soft Relief Dark and improves fixed glass backgrounds, Electric Azure bloom, and Violet Flow animation.
+- Retains all-time and date-scoped automated PDF, graph, map, XLSX, CSV, and JSON exports without generating files during startup.
 
 ## Migration Update
 
@@ -43,9 +44,12 @@ Download the EXE from Releases, place it in a folder on your PC, and create a de
 - **Map View:** Visualize geocoded case locations with selectable map focus and custom transparent map markers.
 - **Graphs:** Preview analytics by offense type, agency, device type, examiner, investigator, city, state, tools, and volume totals.
 - **Reports:** Export PDF, XLSX, CSV, graph snapshots, map HTML, and map data files from the modern native export engine.
+- **Custom Workload Reports:** Summarize devices, device types, and processed volume for a selected period and Examiner, Investigator, or Agency.
+- **Evidence & Custody:** Maintain evidence inventories and chain-of-custody events inside each case.
+- **Case Families:** Group numbered device sub-cases and export a combined family report.
 - **Customization:** Change themes, app header title, report logo, map marker, tab names, tab visibility, field names, field visibility, and custom informational tabs.
 - **Custom Fields:** Add user-defined case fields that are stored with each case.
-- **Backup & Restore:** Create database backups, restore backups, and generate support bundles from Settings.
+- **Backup & Restore:** Create database backups, encrypted portable backups, verified restores, and support bundles from Settings.
 - **Legacy Import:** Import a legacy database or zipped `app_data` folder from inside the application.
   
 ![Image](https://github.com/user-attachments/assets/a2e67522-42d9-4975-9d7a-85f0b579b4ec)

@@ -125,8 +125,16 @@ def _write_setting_json_list(conn: sqlite3.Connection, key: str, values: list[st
     )
 
 
+class ClosingConnection(sqlite3.Connection):
+    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> bool:
+        try:
+            return bool(super().__exit__(exc_type, exc_value, traceback))
+        finally:
+            self.close()
+
+
 def connect(db_path: Path | None = None) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path or active_db_path())
+    conn = sqlite3.connect(db_path or active_db_path(), factory=ClosingConnection)
     conn.row_factory = sqlite3.Row
     return conn
 
