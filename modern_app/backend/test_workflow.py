@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 import database
@@ -9,6 +10,7 @@ import cyberlab_workflow as workflow
 import family_report
 import portable_backup
 import custom_report
+import main as backend_main
 
 
 class WorkflowTests(unittest.TestCase):
@@ -157,6 +159,29 @@ class WorkflowTests(unittest.TestCase):
             custom_report.logo_path = original_logo_path
         self.assertTrue(pdf.read_bytes().startswith(b"%PDF"))
         self.assertIn("CC-26-6000-1", csv_path.read_text(encoding="utf-8-sig"))
+
+    def test_scheduler_catches_up_after_due_time(self) -> None:
+        base = {"enable_schedule": True, "schedule_time": "09:00"}
+        self.assertEqual(
+            backend_main._schedule_token({**base, "frequency": "daily"}, datetime(2026, 7, 16, 9, 45)),
+            "daily:2026-07-16",
+        )
+        self.assertIsNone(backend_main._schedule_token({**base, "frequency": "daily"}, datetime(2026, 7, 16, 8, 59)))
+        self.assertEqual(
+            backend_main._schedule_token({**base, "frequency": "weekly", "schedule_weekday": "Thursday"}, datetime(2026, 7, 16, 11, 30)),
+            "weekly:2026-07-16",
+        )
+        self.assertEqual(
+            backend_main._schedule_token({**base, "frequency": "weekly", "schedule_weekday": "Thursday"}, datetime(2026, 7, 17, 8, 0)),
+            "weekly:2026-07-16",
+        )
+        self.assertIsNone(
+            backend_main._schedule_token({**base, "frequency": "weekly", "schedule_weekday": "Thursday"}, datetime(2026, 7, 15, 18, 0))
+        )
+        self.assertEqual(
+            backend_main._schedule_token({**base, "frequency": "monthly", "schedule_month_day": "15"}, datetime(2026, 7, 16, 8, 0)),
+            "monthly:2026-07",
+        )
 
 
 if __name__ == "__main__":

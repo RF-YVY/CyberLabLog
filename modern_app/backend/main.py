@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 import zipfile
 from calendar import monthrange
-from datetime import datetime
+from datetime import datetime, time as datetime_time, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -79,7 +79,7 @@ FRONTEND_ASSETS = FRONTEND_DIST / "assets"
 RUNTIME_STARTED_AT = time.monotonic()
 LAST_BROWSER_HEARTBEAT = 0.0
 SHUTDOWN_REQUESTED = False
-APP_VERSION = "3.0.5"
+APP_VERSION = "3.0.6"
 GITHUB_REPO = "RF-YVY/CyberLabLog"
 UPDATE_CACHE_TTL_SECONDS = 900
 UPDATE_CACHE: dict[str, Any] = {"checked_at": 0.0, "value": None}
@@ -451,20 +451,31 @@ def _schedule_token(config: dict[str, Any], now: datetime) -> str | None:
         hour, minute = [int(part) for part in schedule_time.split(":", 1)]
     except (ValueError, TypeError):
         hour, minute = 8, 0
-    if (now.hour, now.minute) != (hour, minute):
-        return None
+    hour = max(0, min(23, hour))
+    minute = max(0, min(59, minute))
+    scheduled_time = datetime_time(hour=hour, minute=minute)
     if frequency == "daily":
-        return now.strftime("daily:%Y-%m-%d")
+        scheduled_at = datetime.combine(now.date(), scheduled_time)
+        return now.strftime("daily:%Y-%m-%d") if now >= scheduled_at else None
     if frequency == "weekly":
         weekday = str(config.get("schedule_weekday") or "Monday").lower()
-        if now.strftime("%A").lower() == weekday:
-            return now.strftime("weekly:%Y-%m-%d")
+        weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+        try:
+            target_weekday = weekdays.index(weekday)
+        except ValueError:
+            target_weekday = 0
+        scheduled_date = now.date() + timedelta(days=target_weekday - now.weekday())
+        scheduled_at = datetime.combine(scheduled_date, scheduled_time)
+        if now >= scheduled_at:
+            return f"weekly:{scheduled_date.isoformat()}"
     if frequency == "monthly":
         try:
             month_day = max(1, min(31, int(config.get("schedule_month_day") or 1)))
         except (TypeError, ValueError):
             month_day = 1
-        if now.day == min(month_day, monthrange(now.year, now.month)[1]):
+        scheduled_day = min(month_day, monthrange(now.year, now.month)[1])
+        scheduled_at = datetime.combine(now.date().replace(day=scheduled_day), scheduled_time)
+        if now >= scheduled_at:
             return now.strftime("monthly:%Y-%m")
     return None
 
@@ -481,18 +492,19 @@ def _scheduler_loop() -> None:
             SCHEDULER_STATUS.update({
                 "enabled": bool(config.get("enable_schedule")),
                 "last_checked": now.isoformat(timespec="seconds"),
-                "last_error": "",
             })
             if token and token != last_token and token != LAST_SCHEDULE_TOKEN:
-                LAST_SCHEDULE_TOKEN = token
                 result = run_native_exports(config)
+                LAST_SCHEDULE_TOKEN = token
                 set_json_setting("automated_report_scheduler", {
                     "last_token": token,
                     "last_run": now.isoformat(timespec="seconds"),
                     "last_output_dir": result.get("output_dir", ""),
+                    "last_error": "",
                 })
                 SCHEDULER_STATUS.update({
                     "last_run": now.isoformat(timespec="seconds"),
+                    "last_error": "",
                     "last_result": {
                         "ok": result.get("ok"),
                         "files": len(result.get("files") or []),
@@ -500,10 +512,17 @@ def _scheduler_loop() -> None:
                     },
                 })
         except Exception as exc:
+            failure_time = datetime.now().isoformat(timespec="seconds")
             SCHEDULER_STATUS.update({
-                "last_checked": datetime.now().isoformat(timespec="seconds"),
+                "last_checked": failure_time,
                 "last_error": str(exc),
             })
+            try:
+                state = get_json_setting("automated_report_scheduler", {})
+                state = state if isinstance(state, dict) else {}
+                set_json_setting("automated_report_scheduler", {**state, "last_error": str(exc), "last_attempt": failure_time})
+            except Exception:
+                pass
         time.sleep(60)
 
 

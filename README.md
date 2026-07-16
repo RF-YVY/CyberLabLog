@@ -6,7 +6,11 @@ Download the EXE from Releases, place it in a folder on your PC, and create a de
 
 ![CyberLab Case Tracker modern browser UI](docs/images/cyberlab-modern-browser-ui.png)
 
-## Current Release: v3.0.5
+## Current Release: v3.0.6
+
+- Adds scheduler catch-up after Windows sleep, wake, or a missed polling minute, while retaining duplicate-run protection.
+- Adds a nearby Save Schedule control so weekly day, time, and enabled state are explicitly persisted.
+- Adds a persistent master switch for logo, pane-border, highlight, and interface animations.
 
 - Adds custom workload reports filtered by date range and Examiner, Investigator, or Agency, with local PDF and CSV export.
 - Adds case-family PDFs combining every related device, volume totals, evidence inventory, custody history, and individual results.

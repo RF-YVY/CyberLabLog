@@ -136,6 +136,7 @@ const themes = [
 
 const defaultThemePreferences = {
   theme: "cyber-blue",
+  animations_enabled: true,
 };
 
 const reportTypeOptions = [
@@ -557,6 +558,7 @@ function CaseForm({ form, setForm, onSubmit, mode, busy, onCancelEdit, comboValu
 function App() {
   const [activeTab, setActiveTab] = useState("cases");
   const [theme, setTheme] = useState(() => localStorage.getItem("cyberlab-theme") || "cyber-blue");
+  const [animationsEnabled, setAnimationsEnabled] = useState(() => localStorage.getItem("cyberlab-animations") !== "off");
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [health, setHealth] = useState(null);
   const [cases, setCases] = useState({ rows: [], total: 0 });
@@ -578,7 +580,7 @@ function App() {
   const [comboValues, setComboValues] = useState({});
   const [logoInfo, setLogoInfo] = useState({ exists: false, path: "" });
   const [markerIconInfo, setMarkerIconInfo] = useState({ exists: false, path: "" });
-  const [appInfo, setAppInfo] = useState({ name: "CyberLab Case Tracker", version: "3.0.5", update_available: false });
+  const [appInfo, setAppInfo] = useState({ name: "CyberLab Case Tracker", version: "3.0.6", update_available: false });
   const [appProfile, setAppProfile] = useState(defaultAppProfile);
   const [mapPreferences, setMapPreferences] = useState(defaultMapPreferences);
   const [browserPreferences, setBrowserPreferences] = useState(defaultBrowserPreferences);
@@ -604,14 +606,22 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
+    document.documentElement.dataset.animations = animationsEnabled ? "on" : "off";
+    localStorage.setItem("cyberlab-animations", animationsEnabled ? "on" : "off");
+    if (!animationsEnabled) {
+      document.querySelectorAll(".shine-surface.shine-active").forEach((surface) => surface.classList.remove("shine-active"));
+    }
+  }, [animationsEnabled]);
+
+  useEffect(() => {
     if (!settingsLoaded) return;
     api("/api/settings/json/theme_preferences", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: { theme } }),
+      body: JSON.stringify({ value: { theme, animations_enabled: animationsEnabled } }),
     }).catch(() => null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [theme, settingsLoaded]);
+  }, [theme, animationsEnabled, settingsLoaded]);
 
   useEffect(() => {
     localStorage.setItem("cyberlab-analytics-group", analyticsGroup);
@@ -672,7 +682,7 @@ function App() {
     try {
       const [healthData, appInfoData, profileData, uiCustomizationData, mapPreferenceData, browserPreferenceData, themePreferenceData, caseData, progressData, configData, schedulerData, analyticsData, markerData, comboData, logoData, markerIconData, backupData, dashboardData, qualityData, familyData, templateData, workQueueData] = await Promise.all([
         api("/api/health"),
-        api("/api/app-info").catch(() => ({ name: "CyberLab Case Tracker", version: "3.0.5", update_available: false })),
+        api("/api/app-info").catch(() => ({ name: "CyberLab Case Tracker", version: "3.0.6", update_available: false })),
         api("/api/settings/json/app_profile").catch(() => ({ value: defaultAppProfile })),
         api("/api/settings/json/ui_customization").catch(() => ({ value: defaultUiCustomization })),
         api("/api/settings/json/map_preferences").catch(() => ({ value: defaultMapPreferences })),
@@ -695,13 +705,16 @@ function App() {
         api("/api/work-queue").catch(() => ({ rows: [] })),
       ]);
       setHealth(healthData);
-      setAppInfo(appInfoData || { name: "CyberLab Case Tracker", version: "3.0.5", update_available: false });
+      setAppInfo(appInfoData || { name: "CyberLab Case Tracker", version: "3.0.6", update_available: false });
       setAppProfile({ ...defaultAppProfile, ...(profileData.value || {}) });
       setUiCustomization({ ...defaultUiCustomization, ...(uiCustomizationData.value || {}) });
       setMapPreferences({ ...defaultMapPreferences, ...(mapPreferenceData.value || {}) });
       setBrowserPreferences({ ...defaultBrowserPreferences, ...(browserPreferenceData.value || {}) });
       if (themePreferenceData.value?.theme) {
         setTheme(themePreferenceData.value.theme);
+      }
+      if (typeof themePreferenceData.value?.animations_enabled === "boolean") {
+        setAnimationsEnabled(themePreferenceData.value.animations_enabled);
       }
       setSettingsLoaded(true);
       setCases(caseData);
@@ -1022,6 +1035,10 @@ function App() {
 
   async function saveReportConfig(event) {
     event.preventDefault();
+    await persistReportConfig("Automated report settings saved");
+  }
+
+  async function persistReportConfig(successMessage = "Automated report settings saved") {
     setBusy(true);
     try {
       await api("/api/automated-exports/config", {
@@ -1029,7 +1046,7 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ value: reportConfig }),
       });
-      setStatus("Automated report settings saved");
+      setStatus(successMessage);
       await refresh();
     } catch (error) {
       setStatus(`Report settings failed: ${error.message}`);
@@ -1556,7 +1573,7 @@ function App() {
       .map((tab) => [`custom:${tab.key}`, tab.label || tab.key]);
     return [...builtIns, ...customTabs];
   }, [uiCustomization]);
-  const appVersionLabel = `v${appInfo.version || "3.0.5"}`;
+  const appVersionLabel = `v${appInfo.version || "3.0.6"}`;
 
   useEffect(() => {
     if (navItems.length && !navItems.some(([key]) => key === activeTab)) {
@@ -1584,6 +1601,7 @@ function App() {
   }, []);
 
   function trackPointerShine(event) {
+    if (!animationsEnabled) return;
     const surface = event.target.closest?.(".shine-surface");
     if (!surface || !event.currentTarget.contains(surface)) {
       clearPointerShine(event.currentTarget);
@@ -1883,7 +1901,10 @@ function App() {
                   <Field label="Monthly Day" name="schedule_month_day" type="number" form={reportConfig} setForm={(fn) => setReportConfig(fn)} />
                 </div>
                 <div className="settings-checks compact-checks">
-                  <strong className="settings-checks-title">Scheduler</strong>
+                  <div className="scheduler-heading">
+                    <strong className="settings-checks-title">Scheduler</strong>
+                    <button className="ghost-action compact" type="button" onClick={() => persistReportConfig("Report schedule saved")} disabled={busy}><Save size={15} /> Save Schedule</button>
+                  </div>
                   <label>
                     <input
                       type="checkbox"
@@ -2102,6 +2123,10 @@ function App() {
                   <select value={theme} onChange={(event) => setTheme(event.target.value)}>
                     {themes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                   </select>
+                </label>
+                <label className="setting-card toggle-setting">
+                  <span><strong>Interface Animations</strong><small className="muted">Logo movement, pane highlights, border sweeps, and entry transitions.</small></span>
+                  <input type="checkbox" checked={animationsEnabled} onChange={(event) => setAnimationsEnabled(event.target.checked)} />
                 </label>
                 <label className="field setting-card">
                   <span>Preferred Browser</span>

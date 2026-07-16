@@ -1439,6 +1439,10 @@ tbody tr:hover {
 .custom-report-heading p { margin: 4px 0 0; }
 .custom-report-fields { display: grid; grid-template-columns: repeat(5, minmax(130px, 1fr)); gap: 10px; margin-top: 14px; }
 .custom-report-actions { justify-content: flex-end; margin-top: 12px; }
+.scheduler-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.toggle-setting { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.toggle-setting > span { display: grid; gap: 3px; }
+.toggle-setting input { width: 18px; height: 18px; accent-color: var(--primary); }
 
 .settings-column {
   display: grid;
@@ -2404,4 +2408,25 @@ tbody tr:hover {
   .mini-actions button::after {
     display: none;
   }
+}
+
+:root[data-animations="off"] *,
+:root[data-animations="off"] *::before,
+:root[data-animations="off"] *::after {
+  scroll-behavior: auto !important;
+  animation: none !important;
+  transition: none !important;
+}
+
+:root[data-animations="off"] .shine-surface::before,
+:root[data-animations="off"] .shine-surface::after,
+:root[data-animations="off"] .brand-mark::after,
+:root[data-animations="off"] .nav-button::after,
+:root[data-animations="off"] .primary-action::after,
+:root[data-animations="off"] .ghost-action::after,
+:root[data-animations="off"] .file-action::after,
+:root[data-animations="off"] .icon-button::after,
+:root[data-animations="off"] .table-action::after,
+:root[data-animations="off"] .mini-actions button::after {
+  display: none !important;
 }
