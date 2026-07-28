@@ -1345,7 +1345,8 @@ tbody tr:hover {
 }
 
 .primary-action,
-.ghost-action {
+.ghost-action,
+.complete-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1359,6 +1360,18 @@ tbody tr:hover {
   border: 0;
   background: linear-gradient(180deg, var(--primary), var(--primary-2));
   font-weight: 700;
+}
+
+.complete-action {
+  color: #effff8;
+  border: 1px solid color-mix(in srgb, #35d98a 70%, var(--border));
+  background: color-mix(in srgb, #168653 72%, var(--card));
+  font-weight: 700;
+}
+
+.complete-action:hover {
+  border-color: #55efaa;
+  background: color-mix(in srgb, #20a86a 78%, var(--card));
 }
 
 .primary-action.inline {
@@ -1418,6 +1431,42 @@ tbody tr:hover {
 .mini-actions button[aria-label] {
   width: 34px;
   padding: 0;
+}
+
+.progress-list-heading,
+.progress-search-row,
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.progress-list-heading {
+  align-items: end;
+  margin-bottom: 14px;
+}
+
+.progress-list-heading h2,
+.section-heading h2 {
+  margin-bottom: 4px;
+}
+
+.progress-list-heading select {
+  min-width: 180px;
+  max-width: 220px;
+}
+
+.progress-search-row {
+  margin-bottom: 14px;
+}
+
+.progress-search-row .search-box {
+  flex: 1;
+}
+
+.table-action.complete {
+  color: #55efaa;
 }
 
 .report-grid,
@@ -2382,8 +2431,12 @@ tbody tr:hover {
   .quality-row .review-actions { grid-column: 3; justify-self: start; }
   .draft-recovery,
   .work-queue-head,
+  .progress-list-heading,
+  .progress-search-row,
+  .section-heading,
   .custom-report-heading { align-items: stretch; flex-direction: column; }
   .work-queue-head select { max-width: none; width: 100%; }
+  .progress-list-heading select { max-width: none; width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {

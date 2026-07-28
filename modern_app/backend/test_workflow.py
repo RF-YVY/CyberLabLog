@@ -183,6 +183,31 @@ class WorkflowTests(unittest.TestCase):
             "monthly:2026-07",
         )
 
+    def test_complete_in_progress_case_saves_final_edits(self) -> None:
+        active = self.create_case("CC-26-7000-1", progress=True)
+        payload = backend_main.CasePayload(
+            case_number="CC-26-7000-1",
+            examiner="Examiner One",
+            investigator="Investigator One",
+            agency="Updated Agency",
+            city_of_offense="Oxford",
+            state_of_offense="MS",
+            start_date="2026-07-01",
+            end_date="2026-07-28",
+            volume_size_gb=96,
+            offense_type="Fraud",
+            device_type="Android",
+            workflow_status="Ready for Completion",
+            priority="High",
+        )
+
+        completed = backend_main.complete_case(active["id"], payload)
+
+        self.assertIsNone(database.get_case(active["id"], in_progress=True))
+        self.assertEqual(completed["agency"], "Updated Agency")
+        self.assertEqual(completed["device_type"], "Android")
+        self.assertEqual(completed["volume_size_gb"], 96)
+
 
 if __name__ == "__main__":
     unittest.main()

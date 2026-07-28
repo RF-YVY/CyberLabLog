@@ -470,7 +470,18 @@ function Field({ label, name, form, setForm, type = "text", options, suggestions
   );
 }
 
-function CaseForm({ form, setForm, onSubmit, mode, busy, onCancelEdit, comboValues = {}, uiCustomization = defaultUiCustomization }) {
+function CaseForm({
+  form,
+  setForm,
+  onSubmit,
+  mode,
+  busy,
+  onCancelEdit,
+  onSaveInProgress,
+  onComplete,
+  comboValues = {},
+  uiCustomization = defaultUiCustomization,
+}) {
   const isEditing = Boolean(form.id);
   const label = (key, fallback) => fieldLabel(uiCustomization, key, fallback);
   const visible = (key) => fieldVisible(uiCustomization, key, mode);
@@ -541,9 +552,23 @@ function CaseForm({ form, setForm, onSubmit, mode, busy, onCancelEdit, comboValu
           <Save size={17} />
           {isEditing ? "Update Case" : mode === "progress" ? "Save In Progress" : "Save Completed Case"}
         </button>
-        <button className="ghost-action" type="button" onClick={() => setForm(blankCase)}>
-          Clear
-        </button>
+        {!isEditing && mode === "completed" && onSaveInProgress && (
+          <button className="ghost-action" type="button" onClick={onSaveInProgress} disabled={busy}>
+            <Save size={17} />
+            Place In Progress
+          </button>
+        )}
+        {isEditing && mode === "progress" && onComplete && (
+          <button className="complete-action" type="button" onClick={onComplete} disabled={busy}>
+            <CheckCircle2 size={17} />
+            Completed
+          </button>
+        )}
+        {!isEditing && (
+          <button className="ghost-action" type="button" onClick={() => setForm(blankCase)}>
+            Clear
+          </button>
+        )}
         {isEditing && (
           <button className="ghost-action" type="button" onClick={onCancelEdit}>
             <X size={16} />
@@ -580,7 +605,7 @@ function App() {
   const [comboValues, setComboValues] = useState({});
   const [logoInfo, setLogoInfo] = useState({ exists: false, path: "" });
   const [markerIconInfo, setMarkerIconInfo] = useState({ exists: false, path: "" });
-  const [appInfo, setAppInfo] = useState({ name: "CyberLab Case Tracker", version: "3.0.6", update_available: false });
+  const [appInfo, setAppInfo] = useState({ name: "CyberLab Case Tracker", version: "3.0.7", update_available: false });
   const [appProfile, setAppProfile] = useState(defaultAppProfile);
   const [mapPreferences, setMapPreferences] = useState(defaultMapPreferences);
   const [browserPreferences, setBrowserPreferences] = useState(defaultBrowserPreferences);
@@ -682,7 +707,7 @@ function App() {
     try {
       const [healthData, appInfoData, profileData, uiCustomizationData, mapPreferenceData, browserPreferenceData, themePreferenceData, caseData, progressData, configData, schedulerData, analyticsData, markerData, comboData, logoData, markerIconData, backupData, dashboardData, qualityData, familyData, templateData, workQueueData] = await Promise.all([
         api("/api/health"),
-        api("/api/app-info").catch(() => ({ name: "CyberLab Case Tracker", version: "3.0.6", update_available: false })),
+        api("/api/app-info").catch(() => ({ name: "CyberLab Case Tracker", version: "3.0.7", update_available: false })),
         api("/api/settings/json/app_profile").catch(() => ({ value: defaultAppProfile })),
         api("/api/settings/json/ui_customization").catch(() => ({ value: defaultUiCustomization })),
         api("/api/settings/json/map_preferences").catch(() => ({ value: defaultMapPreferences })),
@@ -705,7 +730,7 @@ function App() {
         api("/api/work-queue").catch(() => ({ rows: [] })),
       ]);
       setHealth(healthData);
-      setAppInfo(appInfoData || { name: "CyberLab Case Tracker", version: "3.0.6", update_available: false });
+      setAppInfo(appInfoData || { name: "CyberLab Case Tracker", version: "3.0.7", update_available: false });
       setAppProfile({ ...defaultAppProfile, ...(profileData.value || {}) });
       setUiCustomization({ ...defaultUiCustomization, ...(uiCustomizationData.value || {}) });
       setMapPreferences({ ...defaultMapPreferences, ...(mapPreferenceData.value || {}) });
@@ -747,8 +772,16 @@ function App() {
 
   async function saveCase(event, mode) {
     event.preventDefault();
-    setBusy(true);
     const form = mode === "progress" ? progressForm : caseForm;
+    await persistCase(form, mode, mode);
+  }
+
+  async function saveNewCaseInProgress() {
+    await persistCase(caseForm, "progress", "completed");
+  }
+
+  async function persistCase(form, mode, draftMode) {
+    setBusy(true);
     const isEditing = Boolean(form.id);
     const path = form.id
       ? mode === "progress"
@@ -764,11 +797,11 @@ function App() {
         body: JSON.stringify(payloadFromForm(form)),
       });
       await saveComboValues(form);
-      localStorage.removeItem(`cyberlab-draft-${mode}`);
-      setSavedDrafts((current) => ({ ...current, [mode]: null }));
-      if (mode === "progress") setProgressForm(isEditing ? blankCase : retainedCaseDefaults(form));
+      localStorage.removeItem(`cyberlab-draft-${draftMode}`);
+      setSavedDrafts((current) => ({ ...current, [draftMode]: null }));
+      if (draftMode === "progress") setProgressForm(isEditing ? blankCase : retainedCaseDefaults(form));
       else setCaseForm(isEditing ? blankCase : retainedCaseDefaults(form));
-      setStatus("Case saved");
+      setStatus(mode === "progress" && !isEditing ? "Case placed in progress" : "Case saved");
       await refresh();
     } catch (error) {
       setStatus(`Save failed: ${error.message}`);
@@ -833,6 +866,29 @@ function App() {
     }
   }
 
+  async function completeEditedCase() {
+    if (!progressForm.id) return;
+    if (!window.confirm(`Mark ${progressForm.case_number || "this case"} completed?`)) return;
+    setBusy(true);
+    try {
+      await api(`/api/in-progress/${progressForm.id}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payloadFromForm(progressForm)),
+      });
+      await saveComboValues(progressForm);
+      localStorage.removeItem("cyberlab-draft-progress");
+      setSavedDrafts((current) => ({ ...current, progress: null }));
+      setProgressForm(blankCase);
+      setStatus("Moved to completed cases");
+      await refresh();
+    } catch (error) {
+      setStatus(`Completion failed: ${error.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function editCompletedCase(row) {
     setSelectedCase(null);
     setCaseForm(formFromRow(row));
@@ -845,6 +901,13 @@ function App() {
     setProgressForm(formFromRow(row));
     setActiveTab("progress");
     setStatus(`Editing ${row.case_number || `case ${row.id}`}`);
+  }
+
+  function cancelInProgressEdit() {
+    localStorage.removeItem("cyberlab-draft-progress");
+    setSavedDrafts((current) => ({ ...current, progress: null }));
+    setProgressForm(blankCase);
+    setStatus("Edit canceled");
   }
 
   function applyCaseTemplate(template, mode) {
@@ -1573,7 +1636,7 @@ function App() {
       .map((tab) => [`custom:${tab.key}`, tab.label || tab.key]);
     return [...builtIns, ...customTabs];
   }, [uiCustomization]);
-  const appVersionLabel = `v${appInfo.version || "3.0.6"}`;
+  const appVersionLabel = `v${appInfo.version || "3.0.7"}`;
 
   useEffect(() => {
     if (navItems.length && !navItems.some(([key]) => key === activeTab)) {
@@ -1790,13 +1853,14 @@ function App() {
 
           {activeTab === "new" && (
             <section className="content-pad">
-              <h2><Plus size={18} /> {caseForm.id ? "Edit Completed Case" : "New Completed Case"}</h2>
+              <h2><Plus size={18} /> {caseForm.id ? "Edit Completed Case" : "New Case"}</h2>
               {savedDrafts.completed && !hasDraftContent(caseForm) && <DraftRecoveryBanner draft={savedDrafts.completed} onRestore={() => restoreDraft("completed")} onDiscard={() => discardDraft("completed")} />}
               <CaseTemplateBar templates={caseTemplates} form={caseForm} onApply={(template) => applyCaseTemplate(template, "completed")} onSave={() => saveCaseTemplate(caseForm)} onDelete={removeCaseTemplate} />
               <CaseForm
                 form={caseForm}
                 setForm={setCaseForm}
                 onSubmit={(event) => saveCase(event, "completed")}
+                onSaveInProgress={saveNewCaseInProgress}
                 onCancelEdit={() => setCaseForm(blankCase)}
                 mode="completed"
                 busy={busy}
@@ -1807,26 +1871,36 @@ function App() {
           )}
 
           {activeTab === "progress" && (
-            <section>
-              <div className="split-content">
-                <div className="content-pad">
-                  <h2><Plus size={18} /> {progressForm.id ? "Edit In-Progress Case" : "Add In-Progress Case"}</h2>
-                  {savedDrafts.progress && !hasDraftContent(progressForm) && <DraftRecoveryBanner draft={savedDrafts.progress} onRestore={() => restoreDraft("progress")} onDiscard={() => discardDraft("progress")} />}
+            <section className="content-pad">
+              {progressForm.id ? (
+                <>
+                  <div className="section-heading">
+                    <div>
+                      <h2><Pencil size={18} /> Edit In-Progress Case</h2>
+                      <p className="muted">Update the active case or mark it completed.</p>
+                    </div>
+                  </div>
                   <CaseTemplateBar templates={caseTemplates} form={progressForm} onApply={(template) => applyCaseTemplate(template, "progress")} onSave={() => saveCaseTemplate(progressForm)} onDelete={removeCaseTemplate} />
                   <CaseForm
                     form={progressForm}
                     setForm={setProgressForm}
                     onSubmit={(event) => saveCase(event, "progress")}
-                    onCancelEdit={() => setProgressForm(blankCase)}
+                    onCancelEdit={cancelInProgressEdit}
+                    onComplete={completeEditedCase}
                     mode="progress"
                     busy={busy}
                     comboValues={comboValues}
                     uiCustomization={uiCustomization}
                   />
-                </div>
-                <div className="content-pad compact-list">
-                  <div className="work-queue-head">
-                    <h2>Active Cases</h2>
+                </>
+              ) : (
+                <>
+                  {savedDrafts.progress && <DraftRecoveryBanner draft={savedDrafts.progress} onRestore={() => restoreDraft("progress")} onDiscard={() => discardDraft("progress")} />}
+                  <div className="progress-list-heading">
+                    <div>
+                      <h2><FileCheck2 size={18} /> In-Progress Cases</h2>
+                      <p className="muted">Review active work, open case details, or choose Edit to continue a case.</p>
+                    </div>
                     <select value={workQueueFilter} onChange={(event) => setWorkQueueFilter(event.target.value)} aria-label="Focused work queue">
                       <option value="all">All active</option>
                       <option value="due_soon">Due within 7 days</option>
@@ -1836,23 +1910,32 @@ function App() {
                       <option value="mine">My active cases</option>
                     </select>
                   </div>
-                  {focusedActiveRows.map((row) => (
-                    <article className="mini-card" key={row.id}>
-                      <strong>{formatValue(row.case_number)}</strong>
-                      <span>{formatValue(row.agency)} / {formatValue(row.offense_type)}</span>
-                      <small>{formatValue(row.priority)} / {formatValue(row.workflow_status)}</small>
-                      <div className="mini-actions">
-                        <button onClick={() => setSelectedCase({ ...row, status: "In Progress", _mode: "progress" })}><Eye size={15} /> View</button>
-                        <button onClick={() => editInProgressCase(row)}><Pencil size={15} /> Edit</button>
-                        <button onClick={() => duplicateCase(row, "progress")}><Copy size={15} /> Duplicate</button>
-                        <button onClick={() => completeCase(row.id)}><CheckCircle2 size={15} /> Complete</button>
-                        <button onClick={() => removeCase(row.id, "progress")} title="Delete in-progress case" aria-label="Delete in-progress case"><Trash2 size={15} /></button>
-                      </div>
-                    </article>
-                  ))}
-                  {!focusedActiveRows.length && <p className="empty-copy">No active cases match this view.</p>}
-                </div>
-              </div>
+                  <div className="progress-search-row">
+                    <div className="search-box">
+                      <Search size={17} />
+                      <input
+                        value={search}
+                        onChange={(event) => setSearch(event.target.value)}
+                        onKeyDown={(event) => event.key === "Enter" && refresh()}
+                        placeholder="Search active cases..."
+                      />
+                    </div>
+                    <button className="icon-button" onClick={refresh} disabled={busy} title="Refresh">
+                      <RefreshCw size={17} className={busy ? "spin" : ""} />
+                    </button>
+                  </div>
+                  <InProgressTable
+                    rows={focusedActiveRows}
+                    total={inProgress.total}
+                    onView={(row) => setSelectedCase({ ...row, status: "In Progress", _mode: "progress" })}
+                    onEdit={editInProgressCase}
+                    onDuplicate={(row) => duplicateCase(row, "progress")}
+                    onComplete={(row) => completeCase(row.id)}
+                    onDelete={(id) => removeCase(id, "progress")}
+                    uiCustomization={uiCustomization}
+                  />
+                </>
+              )}
             </section>
           )}
 
@@ -2869,6 +2952,56 @@ function CaseTable({ rows, total, onView, onEdit, onDuplicate, onDelete, uiCusto
             {!rows.length && (
               <tr>
                 <td colSpan={columns.length + 1} className="empty-state">No cases loaded yet.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+function InProgressTable({ rows, total, onView, onEdit, onDuplicate, onComplete, onDelete, uiCustomization = defaultUiCustomization }) {
+  const columns = [
+    ["case_number", "Case #", (row) => row.case_number],
+    ["examiner", "Examiner", (row) => row.examiner],
+    ["investigator", "Investigator", (row) => row.investigator],
+    ["agency", "Agency", (row) => row.agency],
+    ["device_type", "Device", (row) => row.device_type],
+    ["workflow_status", "Workflow", (row) => row.workflow_status],
+    ["priority", "Priority", (row) => row.priority],
+    ["target_due_date", "Due", (row) => row.target_due_date],
+  ].filter(([key]) => ["workflow_status", "priority", "target_due_date"].includes(key) || fieldVisible(uiCustomization, key, "progress"));
+  return (
+    <>
+      <div className="table-meta">
+        <span>{rows.length === total ? `${total || 0} active cases` : `${rows.length} of ${total || 0} active cases`}</span>
+        <span>Edit a case to update or complete it</span>
+      </div>
+      <div className="case-table">
+        <table>
+          <thead>
+            <tr>
+              {columns.map(([key, fallback]) => <th key={key}>{fieldLabel(uiCustomization, key, fallback)}</th>)}
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id}>
+                {columns.map(([key, , reader]) => <td key={key}>{formatValue(reader(row))}</td>)}
+                <td className="table-actions">
+                  <button className="table-action" onClick={() => onView(row)} title="View"><Eye size={15} /></button>
+                  <button className="table-action" onClick={() => onEdit(row)} title="Edit"><Pencil size={15} /></button>
+                  <button className="table-action" onClick={() => onDuplicate(row)} title="Duplicate"><Copy size={15} /></button>
+                  <button className="table-action complete" onClick={() => onComplete(row)} title="Complete"><CheckCircle2 size={15} /></button>
+                  <button className="table-action danger" onClick={() => onDelete(row.id)} title="Delete"><Trash2 size={15} /></button>
+                </td>
+              </tr>
+            ))}
+            {!rows.length && (
+              <tr>
+                <td colSpan={columns.length + 1} className="empty-state">No active cases match this view.</td>
               </tr>
             )}
           </tbody>

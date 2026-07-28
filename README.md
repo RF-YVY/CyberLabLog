@@ -6,7 +6,11 @@ Download the EXE from Releases, place it in a folder on your PC, and create a de
 
 ![CyberLab Case Tracker modern browser UI](docs/images/cyberlab-modern-browser-ui.png)
 
-## Current Release: v3.0.6
+## Current Release: v3.0.7
+
+- Adds a **Place In Progress** action beside **Save Completed Case** in the New Case workflow.
+- Replaces the In Progress entry form with a searchable, filterable table of active cases and their workflow details.
+- Adds a **Completed** action while editing an in-progress case, saving final edits before moving it to completed cases.
 
 - Adds scheduler catch-up after Windows sleep, wake, or a missed polling minute, while retaining duplicate-run protection.
 - Adds a nearby Save Schedule control so weekly day, time, and enabled state are explicitly persisted.

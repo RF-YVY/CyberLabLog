@@ -79,7 +79,7 @@ FRONTEND_ASSETS = FRONTEND_DIST / "assets"
 RUNTIME_STARTED_AT = time.monotonic()
 LAST_BROWSER_HEARTBEAT = 0.0
 SHUTDOWN_REQUESTED = False
-APP_VERSION = "3.0.6"
+APP_VERSION = "3.0.7"
 GITHUB_REPO = "RF-YVY/CyberLabLog"
 UPDATE_CACHE_TTL_SECONDS = 900
 UPDATE_CACHE: dict[str, Any] = {"checked_at": 0.0, "value": None}
@@ -701,9 +701,11 @@ def duplicate_in_progress(case_id: int) -> dict[str, Any]:
 
 
 @app.post("/api/in-progress/{case_id}/complete")
-def complete_case(case_id: int) -> dict[str, Any]:
+def complete_case(case_id: int, payload: CasePayload | None = None) -> dict[str, Any]:
     try:
         source = get_case(case_id, in_progress=True)
+        if payload is not None:
+            source = update_case(case_id, payload.model_dump(), in_progress=True)
         result = complete_in_progress_case(case_id)
         record_audit("case", result.get("id"), "completed", result.get("case_number"), "Moved from active work to completed cases", case_changes(source, result))
         return result
