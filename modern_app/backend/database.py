@@ -111,6 +111,48 @@ DEVICE_TYPE_ALIASES = {
     "windows": "Windows",
 }
 
+INVESTIGATION_SUBJECT_ALIASES = {
+    "subject name of investigation",
+    "investigation subject",
+    "subject of investigation",
+    "investigation subject name",
+}
+
+
+def _is_investigation_subject_name(value: Any) -> bool:
+    normalized = " ".join("".join(character if character.isalnum() else " " for character in str(value or "").lower()).split())
+    return any(alias in normalized for alias in INVESTIGATION_SUBJECT_ALIASES)
+
+
+def _investigation_subject_custom_keys() -> set[str]:
+    customization = get_json_setting("ui_customization", {})
+    custom_definitions = customization.get("custom_fields", []) if isinstance(customization, dict) else []
+    return {
+        str(field.get("key"))
+        for field in custom_definitions
+        if isinstance(field, dict) and field.get("key") and _is_investigation_subject_name(f"{field.get('key', '')} {field.get('label', '')}")
+    }
+
+
+def _resolve_investigation_subject(row: dict[str, Any], configured_keys: set[str] | None = None) -> dict[str, Any]:
+    if str(row.get("investigation_subject") or "").strip():
+        return row
+    try:
+        custom_values = json.loads(str(row.get("custom_fields") or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        custom_values = {}
+    if not isinstance(custom_values, dict):
+        return row
+
+    subject_keys = set(configured_keys if configured_keys is not None else _investigation_subject_custom_keys())
+    subject_keys.update(str(key) for key in custom_values if _is_investigation_subject_name(key))
+    for key in subject_keys:
+        value = str(custom_values.get(key) or "").strip()
+        if value:
+            row["investigation_subject"] = value
+            break
+    return row
+
 
 def _read_setting_json_list(conn: sqlite3.Connection, key: str) -> list[str]:
     row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
@@ -290,6 +332,7 @@ def list_cases(
     offset: int = 0,
 ) -> dict[str, Any]:
     ensure_schema()
+    subject_keys = _investigation_subject_custom_keys()
 
     sort_col, sort_dir, sort_type = SORT_COLUMNS.get(sort, SORT_COLUMNS["newest"])
     where = ""
@@ -310,6 +353,7 @@ def list_cases(
             "os",
             "forensic_tool",
             "notes",
+            "custom_fields",
         ]
         where = "WHERE " + " OR ".join([f"LOWER(COALESCE({col}, '')) LIKE ?" for col in searchable])
         params.extend([like] * len(searchable))
@@ -323,7 +367,7 @@ def list_cases(
         else:
             order_by = f"datetime({sort_col}) {sort_dir}, id {sort_dir}"
         sql = f"SELECT {cols} FROM case_log {where} ORDER BY {order_by} LIMIT ? OFFSET ?"
-        rows = [dict(row) for row in conn.execute(sql, [*params, limit, offset]).fetchall()]
+        rows = [_resolve_investigation_subject(dict(row), subject_keys) for row in conn.execute(sql, [*params, limit, offset]).fetchall()]
     return {"rows": rows, "total": total, "limit": limit, "offset": offset}
 
 
@@ -333,6 +377,7 @@ def list_in_progress(
     offset: int = 0,
 ) -> dict[str, Any]:
     ensure_schema()
+    subject_keys = _investigation_subject_custom_keys()
     where = ""
     params: list[Any] = []
     if search:
@@ -350,6 +395,7 @@ def list_in_progress(
             "priority",
             "workflow_status",
             "notes",
+            "custom_fields",
         ]
         where = "WHERE " + " OR ".join([f"LOWER(COALESCE({col}, '')) LIKE ?" for col in searchable])
         params.extend([like] * len(searchable))
@@ -358,7 +404,7 @@ def list_in_progress(
         total = int(conn.execute(f"SELECT COUNT(*) AS n FROM in_progress_cases {where}", params).fetchone()["n"])
         cols = ", ".join(IN_PROGRESS_COLUMNS)
         rows = [
-            dict(row)
+            _resolve_investigation_subject(dict(row), subject_keys)
             for row in conn.execute(
                 f"SELECT {cols} FROM in_progress_cases {where} ORDER BY datetime(created_at) DESC, id DESC LIMIT ? OFFSET ?",
                 [*params, limit, offset],
@@ -467,7 +513,7 @@ def get_case(case_id: int, in_progress: bool = False) -> dict[str, Any] | None:
             f"SELECT {', '.join(columns)} FROM {table} WHERE id = ?",
             (case_id,),
         ).fetchone()
-    return dict(row) if row else None
+    return _resolve_investigation_subject(dict(row)) if row else None
 
 
 def update_case(case_id: int, payload: dict[str, Any], in_progress: bool = False) -> dict[str, Any]:
