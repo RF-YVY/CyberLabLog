@@ -6,3 +6,5 @@ reportlab
 matplotlib
 openpyxl
 pillow
+cryptography
+pyinstaller

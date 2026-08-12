@@ -102,13 +102,13 @@ def _case_rows() -> list[dict[str, Any]]:
     with connect() as conn:
         rows = conn.execute(
             """
-            SELECT id, case_number, examiner, investigator, agency, city_of_offense,
+            SELECT id, case_number, examiner, investigator, investigation_subject, agency, city_of_offense,
                    state_of_offense, start_date, end_date, volume_size_gb, offense_type,
                    device_type, model, forensic_tool, created_at, 'completed' AS source,
                    'Completed' AS workflow_status, '' AS priority
             FROM case_log
             UNION ALL
-            SELECT id, case_number, examiner, investigator, agency, city_of_offense,
+            SELECT id, case_number, examiner, investigator, investigation_subject, agency, city_of_offense,
                    state_of_offense, start_date, end_date, volume_size_gb, offense_type,
                    device_type, model, forensic_tool, created_at, 'progress' AS source,
                    workflow_status, priority

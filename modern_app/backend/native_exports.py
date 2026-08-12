@@ -242,11 +242,22 @@ def _summary(completed_rows: list[dict[str, Any]], progress_rows: list[dict[str,
         },
         "completed_cases": len(completed_rows),
         "in_progress_cases": len(progress_rows),
+        "average_turnaround_days": _average_turnaround_days(completed_rows),
         "total_volume_gb": round(total_volume, 2),
         "top_offenses": _top_counts(completed_rows, "offense_type"),
         "top_agencies": _top_counts(completed_rows, "agency"),
         "top_devices": _top_counts(completed_rows, "device_type"),
     }
+
+
+def _average_turnaround_days(rows: list[dict[str, Any]]) -> float:
+    durations = []
+    for row in rows:
+        started = _parse_date(row.get("start_date"))
+        ended = _parse_date(row.get("end_date"))
+        if started and ended and ended >= started:
+            durations.append((ended - started).total_seconds() / 86400)
+    return round(sum(durations) / len(durations), 1) if durations else 0.0
 
 
 def _report_profile() -> dict[str, str]:
@@ -608,7 +619,7 @@ def _write_summary_pdf(path: Path, completed_rows: list[dict[str, Any]], progres
         from reportlab.lib.pagesizes import A4, landscape, legal, letter, portrait
         from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
         from reportlab.lib.units import inch
-        from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+        from reportlab.platypus import Image, KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
     except ImportError:
         return None
 
@@ -638,15 +649,16 @@ def _write_summary_pdf(path: Path, completed_rows: list[dict[str, Any]], progres
         Spacer(1, 12),
         _styled_table(
             [
-                ["Completed Cases", "In-Progress Cases", "Total Volume", "Mapped Locations"],
+                ["Completed Cases", "In-Progress Cases", "Avg. Turnaround", "Total Volume", "Mapped Locations"],
                 [
                     str(summary["completed_cases"]),
                     str(summary["in_progress_cases"]),
+                    f"{summary['average_turnaround_days']:.1f} days",
                     _format_volume(summary["total_volume_gb"]),
                     str(len(_map_points(completed_rows, progress_rows, {"include_completed": True, "include_in_progress": True, "include_case_details": False}))),
                 ],
             ],
-            col_widths=[page_width * 0.25] * 4,
+            col_widths=[page_width * 0.2] * 5,
             colors=colors,
         ),
         Spacer(1, 12),
@@ -669,9 +681,11 @@ def _write_summary_pdf(path: Path, completed_rows: list[dict[str, Any]], progres
 
     volume_rows = _graph_rows("Total Volume by Agency", completed_rows, limit=10)
     if volume_rows:
-        elements.append(Paragraph("Top Agencies by Volume", styles["Heading2"]))
-        elements.append(_styled_table([["Agency", "Volume"], *[[item["label"], _format_volume(item["value"])] for item in volume_rows]], [page_width - 1.4 * inch, 1.4 * inch], colors))
-        elements.append(Spacer(1, 8))
+        elements.append(KeepTogether([
+            Paragraph("Top Agencies by Volume", styles["Heading2"]),
+            _styled_table([["Agency", "Volume"], *[[item["label"], _format_volume(item["value"])] for item in volume_rows]], [page_width - 1.4 * inch, 1.4 * inch], colors),
+            Spacer(1, 8),
+        ]))
 
     aging_rows = _case_aging_rows(progress_rows)
     if aging_rows:
@@ -695,8 +709,8 @@ def _write_summary_pdf(path: Path, completed_rows: list[dict[str, Any]], progres
                 row.get("case_number") or "",
                 _short_date(row.get("created_at") or row.get("start_date")),
                 row.get("examiner") or "",
-                row.get("agency") or "",
-                row.get("offense_type") or "",
+                Paragraph(html.escape(str(row.get("agency") or "")), styles["Tiny"]),
+                Paragraph(html.escape(str(row.get("offense_type") or "")), styles["Tiny"]),
                 row.get("device_type") or "",
                 _format_volume(row.get("volume_size_gb")),
             ])
@@ -823,6 +837,7 @@ def _write_summary_xlsx(path: Path, completed_rows: list[dict[str, Any]], progre
         ("Scope", _scope_label(config)),
         ("Completed Cases", summary["completed_cases"]),
         ("In-Progress Cases", summary["in_progress_cases"]),
+        ("Average Turnaround", f"{summary['average_turnaround_days']:.1f} days"),
         ("Total Volume", _format_volume(summary["total_volume_gb"])),
         ("Mapped Locations", len(_map_points(completed_rows, progress_rows, {"include_completed": True, "include_in_progress": True, "include_case_details": False}))),
     ]

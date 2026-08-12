@@ -6,7 +6,12 @@ Download the EXE from Releases, place it in a folder on your PC, and create a de
 
 ![CyberLab Case Tracker modern browser UI](docs/images/cyberlab-modern-browser-ui.png)
 
-## Current Release: v3.0.7
+## Current Release: v3.0.8
+
+- Adds average turnaround time to date-scoped and all-time PDF report summaries.
+- Adds Investigation Subject to case entry, case lists, detail views, persistence, and search.
+- Fixes Agency and Offense alphabetical sorting and adds case-insensitive A-Z and Z-A choices.
+- Improves PDF detail-table wrapping and section pagination for long agency and offense content.
 
 - Adds a **Place In Progress** action beside **Save Completed Case** in the New Case workflow.
 - Replaces the In Progress entry form with a searchable, filterable table of active cases and their workflow details.
@@ -45,7 +50,7 @@ Download the EXE from Releases, place it in a folder on your PC, and create a de
 
 ## Features
 
-- **Case Entry:** Add completed or in-progress digital forensic cases with examiner, investigator, agency, city, state, offense, device, volume, notes, FPR status, and recovered-data status.
+- **Case Entry:** Add completed or in-progress digital forensic cases with examiner, investigator, investigation subject, agency, city, state, offense, device, volume, notes, FPR status, and recovered-data status.
 - **Workflow Retention:** Last-used Examiner, Investigator, Agency, City, State, Offense Type, and Device Type persist after saving so repeated sub-case entry is faster.
 - **Cases View:** Browse, search, sort, view, edit, duplicate, and delete completed cases.
 - **In-Progress View:** Track active cases, edit workflow status, duplicate work items, and complete in-progress cases into the main case log.

@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.8] - 2026-08-12
+- Added average turnaround time to all-time, date-scoped, and custom PDF report summaries using completed cases with valid start and end dates.
+- Added Investigation Subject to completed and in-progress case entry, storage, list views, detail views, and search.
+- Fixed Agency and Offense alphabetical sorting so mixed capitalization sorts consistently, and added A-Z and Z-A options.
+- Improved PDF detail-table wrapping and section pagination to prevent long values from overlapping columns or leaving orphaned table continuations.
+- Added regression coverage for subject search, alphabetical sorting in both directions, and scoped turnaround calculations.
+
 ## [3.0.2.1] - 2025-11-25
 - Enlarged the inline editor in View Data so case notes and other fields stay visible while you type.
 - Hardened treeview scrolling callbacks to prevent Tcl errors when the widget receives non-numeric commands.

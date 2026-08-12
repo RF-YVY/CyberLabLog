@@ -75,7 +75,7 @@ packaging because the browser UI and backend share one local server.
 ## Windows Build
 
 The current packaging scaffold builds the frontend, bundles the FastAPI backend,
-and creates a Windows app folder:
+and creates a single-file Windows executable:
 
 ```powershell
 .\modern_app\build_windows.ps1
@@ -84,11 +84,11 @@ and creates a Windows app folder:
 The output is written to:
 
 ```text
-dist\CyberLab Case Tracker\CyberLab Case Tracker.exe
+dist\CyberLab Case Tracker.exe
 ```
 
-For packaged testing, place `caselog_gui_v6.db` and `app_data\` beside the EXE
-folder contents, or import them from Settings inside the app. In development,
+For packaged testing, place `caselog_gui_v6.db` and `app_data\` beside the EXE,
+or import them from Settings inside the app. In development,
 the app continues to use the repository-root database and `app_data` folder.
 
 ## Data Compatibility

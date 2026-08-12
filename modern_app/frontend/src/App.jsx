@@ -51,6 +51,7 @@ const blankCase = {
   case_number: "",
   examiner: "",
   investigator: "",
+  investigation_subject: "",
   agency: "",
   city_of_offense: "",
   state_of_offense: "",
@@ -97,6 +98,7 @@ const caseFieldDefinitions = [
   ["case_number", "Case #"],
   ["examiner", "Examiner"],
   ["investigator", "Investigator"],
+  ["investigation_subject", "Investigation Subject"],
   ["agency", "Agency"],
   ["city_of_offense", "City of Offense"],
   ["state_of_offense", "State"],
@@ -495,6 +497,7 @@ function CaseForm({
         {renderField("case_number", "Case #")}
         {renderField("examiner", "Examiner", { suggestions: comboValues.examiner || [] })}
         {renderField("investigator", "Investigator", { suggestions: comboValues.investigator || [] })}
+        {renderField("investigation_subject", "Investigation Subject")}
         {renderField("agency", "Agency", { suggestions: comboValues.agency || [] })}
         {renderField("city_of_offense", "City of Offense", { suggestions: comboValues.city_of_offense || [] })}
         {renderField("state_of_offense", "State", { suggestions: comboValues.state_of_offense || [] })}
@@ -605,7 +608,7 @@ function App() {
   const [comboValues, setComboValues] = useState({});
   const [logoInfo, setLogoInfo] = useState({ exists: false, path: "" });
   const [markerIconInfo, setMarkerIconInfo] = useState({ exists: false, path: "" });
-  const [appInfo, setAppInfo] = useState({ name: "CyberLab Case Tracker", version: "3.0.7", update_available: false });
+  const [appInfo, setAppInfo] = useState({ name: "CyberLab Case Tracker", version: "3.0.8", update_available: false });
   const [appProfile, setAppProfile] = useState(defaultAppProfile);
   const [mapPreferences, setMapPreferences] = useState(defaultMapPreferences);
   const [browserPreferences, setBrowserPreferences] = useState(defaultBrowserPreferences);
@@ -707,7 +710,7 @@ function App() {
     try {
       const [healthData, appInfoData, profileData, uiCustomizationData, mapPreferenceData, browserPreferenceData, themePreferenceData, caseData, progressData, configData, schedulerData, analyticsData, markerData, comboData, logoData, markerIconData, backupData, dashboardData, qualityData, familyData, templateData, workQueueData] = await Promise.all([
         api("/api/health"),
-        api("/api/app-info").catch(() => ({ name: "CyberLab Case Tracker", version: "3.0.7", update_available: false })),
+        api("/api/app-info").catch(() => ({ name: "CyberLab Case Tracker", version: "3.0.8", update_available: false })),
         api("/api/settings/json/app_profile").catch(() => ({ value: defaultAppProfile })),
         api("/api/settings/json/ui_customization").catch(() => ({ value: defaultUiCustomization })),
         api("/api/settings/json/map_preferences").catch(() => ({ value: defaultMapPreferences })),
@@ -730,7 +733,7 @@ function App() {
         api("/api/work-queue").catch(() => ({ rows: [] })),
       ]);
       setHealth(healthData);
-      setAppInfo(appInfoData || { name: "CyberLab Case Tracker", version: "3.0.7", update_available: false });
+      setAppInfo(appInfoData || { name: "CyberLab Case Tracker", version: "3.0.8", update_available: false });
       setAppProfile({ ...defaultAppProfile, ...(profileData.value || {}) });
       setUiCustomization({ ...defaultUiCustomization, ...(uiCustomizationData.value || {}) });
       setMapPreferences({ ...defaultMapPreferences, ...(mapPreferenceData.value || {}) });
@@ -1636,7 +1639,7 @@ function App() {
       .map((tab) => [`custom:${tab.key}`, tab.label || tab.key]);
     return [...builtIns, ...customTabs];
   }, [uiCustomization]);
-  const appVersionLabel = `v${appInfo.version || "3.0.7"}`;
+  const appVersionLabel = `v${appInfo.version || "3.0.8"}`;
 
   useEffect(() => {
     if (navItems.length && !navItems.some(([key]) => key === activeTab)) {
@@ -2646,6 +2649,7 @@ function CaseDetailModal({ row, onClose, onEdit, onDuplicate, onNextSubcase, onC
     ["Created", "Created", row.created_at],
     ["examiner", "Examiner", row.examiner],
     ["investigator", "Investigator", row.investigator],
+    ["investigation_subject", "Investigation Subject", row.investigation_subject],
     ["agency", "Agency", row.agency],
     ["city_of_offense", "City/State", `${formatValue(row.city_of_offense)}, ${formatValue(row.state_of_offense)}`],
     ["start_date", "Dates", `${formatValue(row.start_date)} to ${formatValue(row.end_date)}`],
@@ -2871,7 +2875,7 @@ function Toolbar({ search, setSearch, sort, setSort, refresh, busy }) {
           value={search}
           onChange={(event) => setSearch(event.target.value)}
           onKeyDown={(event) => event.key === "Enter" && refresh()}
-          placeholder="Search cases, agencies, offenses..."
+          placeholder="Search cases, subjects, agencies, offenses..."
         />
       </div>
       <select value={sort} onChange={(event) => setSort(event.target.value)} aria-label="Sort cases">
@@ -2881,7 +2885,9 @@ function Toolbar({ search, setSearch, sort, setSort, refresh, busy }) {
         <option value="start_oldest">Start date oldest</option>
         <option value="case_number">Case # A to Z</option>
         <option value="agency">Agency A to Z</option>
+        <option value="agency_desc">Agency Z to A</option>
         <option value="offense">Offense A to Z</option>
+        <option value="offense_desc">Offense Z to A</option>
       </select>
       <button className="icon-button" onClick={refresh} disabled={busy} title="Refresh">
         <RefreshCw size={17} className={busy ? "spin" : ""} />
@@ -2918,6 +2924,7 @@ function CaseTable({ rows, total, onView, onEdit, onDuplicate, onDelete, uiCusto
     ["case_number", "Case #", (row) => row.case_number],
     ["created_at", "Created", (row) => row.created_at],
     ["examiner", "Examiner", (row) => row.examiner],
+    ["investigation_subject", "Investigation Subject", (row) => row.investigation_subject],
     ["agency", "Agency", (row) => row.agency],
     ["offense_type", "Offense", (row) => row.offense_type],
     ["city_of_offense", "City", (row) => row.city_of_offense],
@@ -2966,6 +2973,7 @@ function InProgressTable({ rows, total, onView, onEdit, onDuplicate, onComplete,
     ["case_number", "Case #", (row) => row.case_number],
     ["examiner", "Examiner", (row) => row.examiner],
     ["investigator", "Investigator", (row) => row.investigator],
+    ["investigation_subject", "Investigation Subject", (row) => row.investigation_subject],
     ["agency", "Agency", (row) => row.agency],
     ["device_type", "Device", (row) => row.device_type],
     ["workflow_status", "Workflow", (row) => row.workflow_status],
