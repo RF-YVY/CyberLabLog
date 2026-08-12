@@ -13,6 +13,7 @@ CASE_COLUMNS = [
     "case_number",
     "examiner",
     "investigator",
+    "investigation_subject",
     "agency",
     "city_of_offense",
     "state_of_offense",
@@ -35,6 +36,7 @@ CASE_WRITE_COLUMNS = [
     "case_number",
     "examiner",
     "investigator",
+    "investigation_subject",
     "agency",
     "city_of_offense",
     "state_of_offense",
@@ -67,13 +69,15 @@ IN_PROGRESS_WRITE_COLUMNS = [
 ]
 
 SORT_COLUMNS = {
-    "newest": ("created_at", "DESC"),
-    "oldest": ("created_at", "ASC"),
-    "start_newest": ("start_date", "DESC"),
-    "start_oldest": ("start_date", "ASC"),
-    "case_number": ("case_number", "ASC"),
-    "agency": ("agency", "ASC"),
-    "offense": ("offense_type", "ASC"),
+    "newest": ("created_at", "DESC", "date"),
+    "oldest": ("created_at", "ASC", "date"),
+    "start_newest": ("start_date", "DESC", "date"),
+    "start_oldest": ("start_date", "ASC", "date"),
+    "case_number": ("case_number", "ASC", "text"),
+    "agency": ("agency", "ASC", "text"),
+    "agency_desc": ("agency", "DESC", "text"),
+    "offense": ("offense_type", "ASC", "text"),
+    "offense_desc": ("offense_type", "DESC", "text"),
 }
 
 COMBO_COLUMNS = {
@@ -159,6 +163,7 @@ def ensure_schema() -> None:
                 city_of_offense TEXT,
                 state_of_offense TEXT,
                 investigator TEXT,
+                investigation_subject TEXT,
                 agency TEXT,
                 model TEXT,
                 os TEXT,
@@ -185,6 +190,7 @@ def ensure_schema() -> None:
                 city_of_offense TEXT,
                 state_of_offense TEXT,
                 investigator TEXT,
+                investigation_subject TEXT,
                 agency TEXT,
                 model TEXT,
                 os TEXT,
@@ -221,8 +227,13 @@ def ensure_schema() -> None:
         for table in ("case_log", "in_progress_cases"):
             try:
                 existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-                if "custom_fields" not in existing:
-                    conn.execute(f"ALTER TABLE {table} ADD COLUMN custom_fields TEXT")
+                migrations = {
+                    "custom_fields": "TEXT",
+                    "investigation_subject": "TEXT",
+                }
+                for column, column_type in migrations.items():
+                    if column not in existing:
+                        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
             except sqlite3.DatabaseError:
                 pass
         conn.commit()
@@ -280,7 +291,7 @@ def list_cases(
 ) -> dict[str, Any]:
     ensure_schema()
 
-    sort_col, sort_dir = SORT_COLUMNS.get(sort, SORT_COLUMNS["newest"])
+    sort_col, sort_dir, sort_type = SORT_COLUMNS.get(sort, SORT_COLUMNS["newest"])
     where = ""
     params: list[Any] = []
     if search:
@@ -289,6 +300,7 @@ def list_cases(
             "case_number",
             "examiner",
             "investigator",
+            "investigation_subject",
             "agency",
             "city_of_offense",
             "state_of_offense",
@@ -306,11 +318,11 @@ def list_cases(
         total_sql = f"SELECT COUNT(*) AS n FROM case_log {where}"
         total = int(conn.execute(total_sql, params).fetchone()["n"])
         cols = ", ".join(CASE_COLUMNS)
-        sql = (
-            f"SELECT {cols} FROM case_log {where} "
-            f"ORDER BY datetime({sort_col}) {sort_dir}, id {sort_dir} "
-            "LIMIT ? OFFSET ?"
-        )
+        if sort_type == "text":
+            order_by = f"CASE WHEN TRIM(COALESCE({sort_col}, '')) = '' THEN 1 ELSE 0 END, {sort_col} COLLATE NOCASE {sort_dir}, id {sort_dir}"
+        else:
+            order_by = f"datetime({sort_col}) {sort_dir}, id {sort_dir}"
+        sql = f"SELECT {cols} FROM case_log {where} ORDER BY {order_by} LIMIT ? OFFSET ?"
         rows = [dict(row) for row in conn.execute(sql, [*params, limit, offset]).fetchall()]
     return {"rows": rows, "total": total, "limit": limit, "offset": offset}
 
@@ -329,6 +341,7 @@ def list_in_progress(
             "case_number",
             "examiner",
             "investigator",
+            "investigation_subject",
             "agency",
             "city_of_offense",
             "state_of_offense",
@@ -357,7 +370,7 @@ def list_in_progress(
 def _normalize_case_payload(payload: dict[str, Any], in_progress: bool = False) -> dict[str, Any]:
     allowed = IN_PROGRESS_WRITE_COLUMNS if in_progress else CASE_WRITE_COLUMNS
     data = {key: payload.get(key) for key in allowed}
-    for key in ("case_number", "examiner", "investigator", "agency", "city_of_offense", "state_of_offense", "offense_type", "device_type", "model", "os", "forensic_tool", "notes", "priority", "workflow_status"):
+    for key in ("case_number", "examiner", "investigator", "investigation_subject", "agency", "city_of_offense", "state_of_offense", "offense_type", "device_type", "model", "os", "forensic_tool", "notes", "priority", "workflow_status"):
         if key in data and data[key] is not None:
             data[key] = str(data[key]).strip()
     if "custom_fields" in data:
@@ -667,7 +680,7 @@ def get_combo_values(key: str) -> list[str]:
         if marker not in seen:
             seen.add(marker)
             merged.append(value)
-    return merged
+    return sorted(merged, key=lambda value: (value.casefold(), value))
 
 
 def add_combo_value(key: str, value: str | None) -> list[str]:
@@ -678,9 +691,10 @@ def add_combo_value(key: str, value: str | None) -> list[str]:
     values = get_combo_values(key)
     if value:
         # A value may already be discoverable from the case that was just saved.
-        # Promote it anyway so newly used entries are immediately visible in Settings.
+        # Persist it anyway so newly used entries remain available in Settings.
         values = [item for item in values if item.lower() != value.lower()]
-        values.insert(0, value)
+        values.append(value)
+        values.sort(key=lambda item: (item.casefold(), item))
     with connect() as conn:
         hidden = _read_setting_json_list(conn, f"combo_hidden_{key}")
         hidden = [item for item in hidden if item.lower() != value.lower()]

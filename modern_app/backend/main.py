@@ -79,7 +79,7 @@ FRONTEND_ASSETS = FRONTEND_DIST / "assets"
 RUNTIME_STARTED_AT = time.monotonic()
 LAST_BROWSER_HEARTBEAT = 0.0
 SHUTDOWN_REQUESTED = False
-APP_VERSION = "3.0.7"
+APP_VERSION = "3.0.8"
 GITHUB_REPO = "RF-YVY/CyberLabLog"
 UPDATE_CACHE_TTL_SECONDS = 900
 UPDATE_CACHE: dict[str, Any] = {"checked_at": 0.0, "value": None}
@@ -232,6 +232,7 @@ class CasePayload(BaseModel):
     case_number: str | None = None
     examiner: str | None = None
     investigator: str | None = None
+    investigation_subject: str | None = None
     agency: str | None = None
     city_of_offense: str | None = None
     state_of_offense: str | None = None

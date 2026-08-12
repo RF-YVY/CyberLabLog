@@ -14,6 +14,19 @@ from paths import logo_path
 FILTER_FIELDS = {"examiner": "Examiner", "investigator": "Investigator", "agency": "Agency"}
 
 
+def _average_turnaround_days(rows: list[dict[str, Any]]) -> float:
+    durations = []
+    for row in rows:
+        try:
+            started = date.fromisoformat(str(row.get("start_date") or "")[:10])
+            ended = date.fromisoformat(str(row.get("end_date") or "")[:10])
+        except ValueError:
+            continue
+        if ended >= started:
+            durations.append((ended - started).days)
+    return round(sum(durations) / len(durations), 1) if durations else 0.0
+
+
 def _validate_date(value: str, label: str) -> str:
     try:
         return date.fromisoformat(value).isoformat()
@@ -58,6 +71,7 @@ def custom_report_data(start_date: str, end_date: str, filter_field: str, filter
         "filter_value": filter_value,
         "device_count": len(rows),
         "total_volume_gb": sum(float(row.get("volume_size_gb") or 0) for row in rows),
+        "average_turnaround_days": _average_turnaround_days(rows),
         "device_types": sorted(device_types.items(), key=lambda item: (-item[1], item[0].lower())),
         "rows": rows,
     }
@@ -80,6 +94,7 @@ def generate_custom_pdf(data: dict[str, Any], target: Path) -> Path:
     profile = profile if isinstance(profile, dict) else {}
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle(name="CustomSmall", parent=styles["BodyText"], fontSize=8, leading=10, textColor=colors.HexColor("#40566b")))
+    styles.add(ParagraphStyle(name="CustomTiny", parent=styles["BodyText"], fontSize=6.8, leading=8))
     doc = SimpleDocTemplate(str(target), pagesize=letter, leftMargin=0.5 * inch, rightMargin=0.5 * inch, topMargin=0.48 * inch, bottomMargin=0.48 * inch, title="Custom Workload Report")
     story: list[Any] = []
     title = Paragraph("Monthly Device Processing Report", styles["Title"])
@@ -92,8 +107,8 @@ def generate_custom_pdf(data: dict[str, Any], target: Path) -> Path:
     selected = data["filter_value"] or "All"
     story.append(Paragraph(f"<b>Period:</b> {data['start_date']} through {data['end_date']} &nbsp;&nbsp; <b>{data['filter_label']}:</b> {html.escape(selected)}", styles["BodyText"]))
     summary = Table(
-        [["Devices Processed", str(data["device_count"]), "Total Volume", _volume(data["total_volume_gb"])]],
-        colWidths=[1.45 * inch, 1.0 * inch, 1.2 * inch, 1.4 * inch],
+        [["Devices Processed", str(data["device_count"]), "Avg. Turnaround", f"{data['average_turnaround_days']:.1f} days", "Total Volume", _volume(data["total_volume_gb"])]],
+        colWidths=[1.2 * inch, 0.55 * inch, 1.2 * inch, 0.8 * inch, 0.95 * inch, 1.15 * inch],
     )
     summary.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#e8f1f7")), ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#b8cad7")), ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 10), ("ALIGN", (1, 0), (1, 0), "CENTER")]))
     story.extend([Spacer(1, 10), summary, Spacer(1, 12), Paragraph("Device Type Breakdown", styles["Heading2"])])
@@ -111,14 +126,14 @@ def generate_custom_pdf(data: dict[str, Any], target: Path) -> Path:
         detail_rows.append([
             row.get("end_date") or row.get("start_date") or "-",
             row.get("case_number") or "-",
-            f"{row.get('device_type') or '-'} / {row.get('model') or '-'}",
-            row.get("examiner") or "-",
-            row.get("agency") or "-",
+            Paragraph(html.escape(f"{row.get('device_type') or '-'} / {row.get('model') or '-'}"), styles["CustomTiny"]),
+            Paragraph(html.escape(str(row.get("examiner") or "-")), styles["CustomTiny"]),
+            Paragraph(html.escape(str(row.get("agency") or "-")), styles["CustomTiny"]),
             _volume(row.get("volume_size_gb")),
         ])
     if len(detail_rows) == 1:
         detail_rows.append(["-", "No matching cases", "-", "-", "-", "0.0 GB"])
-    details = Table(detail_rows, colWidths=[0.72 * inch, 1.05 * inch, 1.45 * inch, 1.05 * inch, 1.25 * inch, 0.72 * inch], repeatRows=1)
+    details = Table(detail_rows, colWidths=[0.8 * inch, 1.05 * inch, 1.45 * inch, 1.05 * inch, 1.65 * inch, 0.8 * inch], repeatRows=1)
     details.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#174f78")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#d1dce4")), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 6.8), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
     story.append(details)
     doc.build(story)

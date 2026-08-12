@@ -10,6 +10,7 @@ import cyberlab_workflow as workflow
 import family_report
 import portable_backup
 import custom_report
+import native_exports
 import main as backend_main
 
 
@@ -24,24 +25,68 @@ class WorkflowTests(unittest.TestCase):
         database.active_db_path = self.original_active_db_path
         self.temp_dir.cleanup()
 
-    def create_case(self, case_number: str, *, progress: bool = False, examiner: str = "Examiner One") -> dict:
+    def create_case(
+        self,
+        case_number: str,
+        *,
+        progress: bool = False,
+        examiner: str = "Examiner One",
+        agency: str = "Test Agency",
+        offense: str = "Fraud",
+        subject: str = "",
+    ) -> dict:
         return database.create_case(
             {
                 "case_number": case_number,
                 "examiner": examiner,
                 "investigator": "Investigator One",
-                "agency": "Test Agency",
+                "investigation_subject": subject,
+                "agency": agency,
                 "city_of_offense": "Oxford",
                 "state_of_offense": "MS",
                 "start_date": "2026-07-01",
                 "end_date": "" if progress else "2026-07-03",
                 "volume_size_gb": 64,
-                "offense_type": "Fraud",
+                "offense_type": offense,
                 "device_type": "iOS",
                 "priority": "High",
                 "target_due_date": "2026-07-10" if progress else "",
             },
             in_progress=progress,
+        )
+
+    def test_case_subject_search_and_alphabetical_sorts(self) -> None:
+        self.create_case("CC-26-1000", agency="zeta Agency", offense="Theft", subject="Jordan Smith")
+        self.create_case("CC-26-1001", agency="Alpha Agency", offense="arson", subject="Taylor Jones")
+        self.create_case("CC-26-1002", agency="beta Agency", offense="Burglary", subject="Morgan Lee")
+
+        agencies = [row["agency"] for row in database.list_cases(sort="agency")["rows"]]
+        agencies_desc = [row["agency"] for row in database.list_cases(sort="agency_desc")["rows"]]
+        offenses = [row["offense_type"] for row in database.list_cases(sort="offense")["rows"]]
+        offenses_desc = [row["offense_type"] for row in database.list_cases(sort="offense_desc")["rows"]]
+        matches = database.list_cases(search="jordan smith")["rows"]
+
+        self.assertEqual(agencies, ["Alpha Agency", "beta Agency", "zeta Agency"])
+        self.assertEqual(agencies_desc, ["zeta Agency", "beta Agency", "Alpha Agency"])
+        self.assertEqual(offenses, ["arson", "Burglary", "Theft"])
+        self.assertEqual(offenses_desc, ["Theft", "Burglary", "arson"])
+        self.assertEqual([row["case_number"] for row in matches], ["CC-26-1000"])
+        self.assertEqual(matches[0]["investigation_subject"], "Jordan Smith")
+
+    def test_combo_values_are_alphabetical_and_case_insensitive(self) -> None:
+        self.create_case("CC-26-1010", agency="zeta Agency", offense="Theft")
+        self.create_case("CC-26-1011", agency="Alpha Agency", offense="arson")
+        self.create_case("CC-26-1012", agency="beta Agency", offense="Burglary")
+        database.add_combo_value("agency", "Delta Agency")
+        database.add_combo_value("offense_type", "Cybercrime")
+
+        self.assertEqual(
+            database.get_combo_values("agency"),
+            ["Alpha Agency", "beta Agency", "Delta Agency", "zeta Agency"],
+        )
+        self.assertEqual(
+            database.get_combo_values("offense_type"),
+            ["arson", "Burglary", "Cybercrime", "Theft"],
         )
 
     def test_case_family_and_next_device_number(self) -> None:
@@ -147,6 +192,7 @@ class WorkflowTests(unittest.TestCase):
         data = custom_report.custom_report_data("2026-07-01", "2026-07-31", "examiner", "Examiner One")
         self.assertEqual(data["device_count"], 2)
         self.assertEqual(data["total_volume_gb"], 128)
+        self.assertEqual(data["average_turnaround_days"], 2.0)
         self.assertEqual(data["device_types"], [("iOS", 2)])
         pdf = Path(self.temp_dir.name) / "monthly.pdf"
         csv_path = Path(self.temp_dir.name) / "monthly.csv"
@@ -159,6 +205,17 @@ class WorkflowTests(unittest.TestCase):
             custom_report.logo_path = original_logo_path
         self.assertTrue(pdf.read_bytes().startswith(b"%PDF"))
         self.assertIn("CC-26-6000-1", csv_path.read_text(encoding="utf-8-sig"))
+
+    def test_native_report_turnaround_uses_scoped_completed_rows(self) -> None:
+        rows = [
+            {"start_date": "2026-07-01", "end_date": "2026-07-03", "volume_size_gb": 1},
+            {"start_date": "2026-07-10", "end_date": "2026-07-16", "volume_size_gb": 1},
+            {"start_date": "", "end_date": "2026-07-20", "volume_size_gb": 1},
+        ]
+
+        summary = native_exports._summary(rows, [], {"date_range_mode": "current_month"})
+
+        self.assertEqual(summary["average_turnaround_days"], 4.0)
 
     def test_scheduler_catches_up_after_due_time(self) -> None:
         base = {"enable_schedule": True, "schedule_time": "09:00"}
