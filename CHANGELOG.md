@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.9] - 2026-08-12
+- Fixed the Cases pane so Investigation Subject resolves values entered under the existing "Subject Name of Investigation" case field.
+- Added compatibility for older subject values stored in customized case fields, including list display, editing, and search.
+- Suppressed duplicate subject inputs when a matching legacy custom field is configured.
+- Added regression coverage for searching existing custom-field subject values.
+
 ## [3.0.8] - 2026-08-12
 - Added average turnaround time to all-time, date-scoped, and custom PDF report summaries using completed cases with valid start and end dates.
 - Added Investigation Subject to completed and in-progress case entry, storage, list views, detail views, and search.

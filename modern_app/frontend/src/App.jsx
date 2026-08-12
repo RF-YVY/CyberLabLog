@@ -98,7 +98,7 @@ const caseFieldDefinitions = [
   ["case_number", "Case #"],
   ["examiner", "Examiner"],
   ["investigator", "Investigator"],
-  ["investigation_subject", "Investigation Subject"],
+  ["investigation_subject", "Subject Name of Investigation"],
   ["agency", "Agency"],
   ["city_of_offense", "City of Offense"],
   ["state_of_offense", "State"],
@@ -409,10 +409,30 @@ function parseCustomFields(value) {
   }
 }
 
-function formFromRow(row) {
+function isInvestigationSubjectDefinition(field) {
+  const value = `${field?.key || ""} ${field?.label || ""}`.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return [
+    "subject name of investigation",
+    "investigation subject",
+    "subject of investigation",
+    "investigation subject name",
+  ].some((alias) => value.includes(alias));
+}
+
+function investigationSubjectValue(row, customization = defaultUiCustomization) {
+  if (String(row?.investigation_subject || "").trim()) return row.investigation_subject;
+  const customValues = parseCustomFields(row?.custom_fields);
+  const subjectField = (customization.custom_fields || []).find(isInvestigationSubjectDefinition);
+  if (subjectField && String(customValues[subjectField.key] || "").trim()) return customValues[subjectField.key];
+  const directKey = Object.keys(customValues).find((key) => isInvestigationSubjectDefinition({ key, label: key }));
+  return directKey ? customValues[directKey] : "";
+}
+
+function formFromRow(row, customization = defaultUiCustomization) {
   return {
     ...blankCase,
     ...row,
+    investigation_subject: investigationSubjectValue(row, customization),
     custom_fields: parseCustomFields(row.custom_fields),
     volume_size_gb: row.volume_size_gb ?? "",
     device_type: normalizeDeviceType(row.device_type),
@@ -497,7 +517,7 @@ function CaseForm({
         {renderField("case_number", "Case #")}
         {renderField("examiner", "Examiner", { suggestions: comboValues.examiner || [] })}
         {renderField("investigator", "Investigator", { suggestions: comboValues.investigator || [] })}
-        {renderField("investigation_subject", "Investigation Subject")}
+        {renderField("investigation_subject", "Subject Name of Investigation")}
         {renderField("agency", "Agency", { suggestions: comboValues.agency || [] })}
         {renderField("city_of_offense", "City of Offense", { suggestions: comboValues.city_of_offense || [] })}
         {renderField("state_of_offense", "State", { suggestions: comboValues.state_of_offense || [] })}
@@ -516,7 +536,7 @@ function CaseForm({
             {renderField("target_due_date", "Target Due Date", { type: "date" })}
           </>
         )}
-        {customFieldDefs.filter((field) => field?.key && field?.visible !== false).map((field) => (
+        {customFieldDefs.filter((field) => field?.key && field?.visible !== false && !isInvestigationSubjectDefinition(field)).map((field) => (
           <Field
             key={field.key}
             label={field.label || field.key}
@@ -608,7 +628,7 @@ function App() {
   const [comboValues, setComboValues] = useState({});
   const [logoInfo, setLogoInfo] = useState({ exists: false, path: "" });
   const [markerIconInfo, setMarkerIconInfo] = useState({ exists: false, path: "" });
-  const [appInfo, setAppInfo] = useState({ name: "CyberLab Case Tracker", version: "3.0.8", update_available: false });
+  const [appInfo, setAppInfo] = useState({ name: "CyberLab Case Tracker", version: "3.0.9", update_available: false });
   const [appProfile, setAppProfile] = useState(defaultAppProfile);
   const [mapPreferences, setMapPreferences] = useState(defaultMapPreferences);
   const [browserPreferences, setBrowserPreferences] = useState(defaultBrowserPreferences);
@@ -710,7 +730,7 @@ function App() {
     try {
       const [healthData, appInfoData, profileData, uiCustomizationData, mapPreferenceData, browserPreferenceData, themePreferenceData, caseData, progressData, configData, schedulerData, analyticsData, markerData, comboData, logoData, markerIconData, backupData, dashboardData, qualityData, familyData, templateData, workQueueData] = await Promise.all([
         api("/api/health"),
-        api("/api/app-info").catch(() => ({ name: "CyberLab Case Tracker", version: "3.0.8", update_available: false })),
+        api("/api/app-info").catch(() => ({ name: "CyberLab Case Tracker", version: "3.0.9", update_available: false })),
         api("/api/settings/json/app_profile").catch(() => ({ value: defaultAppProfile })),
         api("/api/settings/json/ui_customization").catch(() => ({ value: defaultUiCustomization })),
         api("/api/settings/json/map_preferences").catch(() => ({ value: defaultMapPreferences })),
@@ -733,7 +753,7 @@ function App() {
         api("/api/work-queue").catch(() => ({ rows: [] })),
       ]);
       setHealth(healthData);
-      setAppInfo(appInfoData || { name: "CyberLab Case Tracker", version: "3.0.8", update_available: false });
+      setAppInfo(appInfoData || { name: "CyberLab Case Tracker", version: "3.0.9", update_available: false });
       setAppProfile({ ...defaultAppProfile, ...(profileData.value || {}) });
       setUiCustomization({ ...defaultUiCustomization, ...(uiCustomizationData.value || {}) });
       setMapPreferences({ ...defaultMapPreferences, ...(mapPreferenceData.value || {}) });
@@ -894,14 +914,14 @@ function App() {
 
   function editCompletedCase(row) {
     setSelectedCase(null);
-    setCaseForm(formFromRow(row));
+    setCaseForm(formFromRow(row, uiCustomization));
     setActiveTab("new");
     setStatus(`Editing ${row.case_number || `case ${row.id}`}`);
   }
 
   function editInProgressCase(row) {
     setSelectedCase(null);
-    setProgressForm(formFromRow(row));
+    setProgressForm(formFromRow(row, uiCustomization));
     setActiveTab("progress");
     setStatus(`Editing ${row.case_number || `case ${row.id}`}`);
   }
@@ -1047,7 +1067,7 @@ function App() {
     try {
       const result = await api(`/api/case-family/next?case_number=${encodeURIComponent(row.case_number || "")}`);
       const next = {
-        ...formFromRow(row),
+        ...formFromRow(row, uiCustomization),
         id: undefined,
         case_number: result.case_number,
         start_date: "",
@@ -1639,7 +1659,7 @@ function App() {
       .map((tab) => [`custom:${tab.key}`, tab.label || tab.key]);
     return [...builtIns, ...customTabs];
   }, [uiCustomization]);
-  const appVersionLabel = `v${appInfo.version || "3.0.8"}`;
+  const appVersionLabel = `v${appInfo.version || "3.0.9"}`;
 
   useEffect(() => {
     if (navItems.length && !navItems.some(([key]) => key === activeTab)) {
@@ -2649,7 +2669,7 @@ function CaseDetailModal({ row, onClose, onEdit, onDuplicate, onNextSubcase, onC
     ["Created", "Created", row.created_at],
     ["examiner", "Examiner", row.examiner],
     ["investigator", "Investigator", row.investigator],
-    ["investigation_subject", "Investigation Subject", row.investigation_subject],
+    ["investigation_subject", "Subject Name of Investigation", investigationSubjectValue(row, uiCustomization)],
     ["agency", "Agency", row.agency],
     ["city_of_offense", "City/State", `${formatValue(row.city_of_offense)}, ${formatValue(row.state_of_offense)}`],
     ["start_date", "Dates", `${formatValue(row.start_date)} to ${formatValue(row.end_date)}`],
@@ -2668,7 +2688,7 @@ function CaseDetailModal({ row, onClose, onEdit, onDuplicate, onNextSubcase, onC
       .filter(([key]) => ["Status", "Created"].includes(key) || fieldVisible(uiCustomization, key, "progress"))
       .map(([key, fallback, value]) => [fieldLabel(uiCustomization, key, fallback), value]),
     ...(uiCustomization.custom_fields || [])
-      .filter((field) => field?.key && field.visible !== false)
+      .filter((field) => field?.key && field.visible !== false && !isInvestigationSubjectDefinition(field))
       .map((field) => [field.label || field.key, customValues[field.key]]),
   ];
   return (
@@ -2924,7 +2944,7 @@ function CaseTable({ rows, total, onView, onEdit, onDuplicate, onDelete, uiCusto
     ["case_number", "Case #", (row) => row.case_number],
     ["created_at", "Created", (row) => row.created_at],
     ["examiner", "Examiner", (row) => row.examiner],
-    ["investigation_subject", "Investigation Subject", (row) => row.investigation_subject],
+    ["investigation_subject", "Investigation Subject", (row) => investigationSubjectValue(row, uiCustomization)],
     ["agency", "Agency", (row) => row.agency],
     ["offense_type", "Offense", (row) => row.offense_type],
     ["city_of_offense", "City", (row) => row.city_of_offense],
@@ -2973,7 +2993,7 @@ function InProgressTable({ rows, total, onView, onEdit, onDuplicate, onComplete,
     ["case_number", "Case #", (row) => row.case_number],
     ["examiner", "Examiner", (row) => row.examiner],
     ["investigator", "Investigator", (row) => row.investigator],
-    ["investigation_subject", "Investigation Subject", (row) => row.investigation_subject],
+    ["investigation_subject", "Investigation Subject", (row) => investigationSubjectValue(row, uiCustomization)],
     ["agency", "Agency", (row) => row.agency],
     ["device_type", "Device", (row) => row.device_type],
     ["workflow_status", "Workflow", (row) => row.workflow_status],

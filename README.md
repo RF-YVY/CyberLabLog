@@ -6,7 +6,11 @@ Download the EXE from Releases, place it in a folder on your PC, and create a de
 
 ![CyberLab Case Tracker modern browser UI](docs/images/cyberlab-modern-browser-ui.png)
 
-## Current Release: v3.0.8
+## Current Release: v3.0.9
+
+- Populates the Cases pane Investigation Subject column from the existing "Subject Name of Investigation" case field.
+- Makes legacy custom-field subject values searchable and preserves them when editing older cases.
+- Prevents duplicate subject inputs when the compatibility field already exists.
 
 - Adds average turnaround time to date-scoped and all-time PDF report summaries.
 - Adds Investigation Subject to case entry, case lists, detail views, persistence, and search.

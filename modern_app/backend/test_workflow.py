@@ -89,6 +89,27 @@ class WorkflowTests(unittest.TestCase):
             ["arson", "Burglary", "Cybercrime", "Theft"],
         )
 
+    def test_custom_subject_name_is_searchable_for_existing_cases(self) -> None:
+        database.set_json_setting(
+            "ui_customization",
+            {
+                "custom_fields": [
+                    {"key": "custom_subject", "label": "Subject Name of Investigation", "type": "text", "visible": True}
+                ]
+            },
+        )
+        database.create_case(
+            {
+                "case_number": "CC-26-1013",
+                "custom_fields": {"custom_subject": "Legacy Subject Name"},
+            }
+        )
+
+        matches = database.list_cases(search="legacy subject name")["rows"]
+
+        self.assertEqual([row["case_number"] for row in matches], ["CC-26-1013"])
+        self.assertEqual(matches[0]["investigation_subject"], "Legacy Subject Name")
+
     def test_case_family_and_next_device_number(self) -> None:
         self.create_case("CC-26-1234-1")
         self.create_case("CC-26-1234-2", progress=True)
