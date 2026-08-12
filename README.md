@@ -11,6 +11,7 @@ Download the EXE from Releases, place it in a folder on your PC, and create a de
 - Adds average turnaround time to date-scoped and all-time PDF report summaries.
 - Adds Investigation Subject to case entry, case lists, detail views, persistence, and search.
 - Fixes Agency and Offense alphabetical sorting and adds case-insensitive A-Z and Z-A choices.
+- Alphabetizes case-entry dropdown values consistently without regard to capitalization.
 - Improves PDF detail-table wrapping and section pagination for long agency and offense content.
 
 - Adds a **Place In Progress** action beside **Save Completed Case** in the New Case workflow.

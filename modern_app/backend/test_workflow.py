@@ -73,6 +73,22 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual([row["case_number"] for row in matches], ["CC-26-1000"])
         self.assertEqual(matches[0]["investigation_subject"], "Jordan Smith")
 
+    def test_combo_values_are_alphabetical_and_case_insensitive(self) -> None:
+        self.create_case("CC-26-1010", agency="zeta Agency", offense="Theft")
+        self.create_case("CC-26-1011", agency="Alpha Agency", offense="arson")
+        self.create_case("CC-26-1012", agency="beta Agency", offense="Burglary")
+        database.add_combo_value("agency", "Delta Agency")
+        database.add_combo_value("offense_type", "Cybercrime")
+
+        self.assertEqual(
+            database.get_combo_values("agency"),
+            ["Alpha Agency", "beta Agency", "Delta Agency", "zeta Agency"],
+        )
+        self.assertEqual(
+            database.get_combo_values("offense_type"),
+            ["arson", "Burglary", "Cybercrime", "Theft"],
+        )
+
     def test_case_family_and_next_device_number(self) -> None:
         self.create_case("CC-26-1234-1")
         self.create_case("CC-26-1234-2", progress=True)

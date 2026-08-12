@@ -169,7 +169,7 @@ const graphTypeOptions = [
   "Total Volume by Device Type",
 ];
 
-const deviceTypeOptions = ["", "iOS", "Android", "Windows", "ChromeOS", "USB", "SD", "SSD", "HDD", "SIM", "NAS", "Laptop", "Digital Camera", "Other"];
+const deviceTypeOptions = ["", ...["iOS", "Android", "Windows", "ChromeOS", "USB", "SD", "SSD", "HDD", "SIM", "NAS", "Laptop", "Digital Camera", "Other"].sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }))];
 
 const deviceTypeAliases = {
   "android": "Android",

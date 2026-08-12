@@ -680,7 +680,7 @@ def get_combo_values(key: str) -> list[str]:
         if marker not in seen:
             seen.add(marker)
             merged.append(value)
-    return merged
+    return sorted(merged, key=lambda value: (value.casefold(), value))
 
 
 def add_combo_value(key: str, value: str | None) -> list[str]:
@@ -691,9 +691,10 @@ def add_combo_value(key: str, value: str | None) -> list[str]:
     values = get_combo_values(key)
     if value:
         # A value may already be discoverable from the case that was just saved.
-        # Promote it anyway so newly used entries are immediately visible in Settings.
+        # Persist it anyway so newly used entries remain available in Settings.
         values = [item for item in values if item.lower() != value.lower()]
-        values.insert(0, value)
+        values.append(value)
+        values.sort(key=lambda item: (item.casefold(), item))
     with connect() as conn:
         hidden = _read_setting_json_list(conn, f"combo_hidden_{key}")
         hidden = [item for item in hidden if item.lower() != value.lower()]

@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 - Added average turnaround time to all-time, date-scoped, and custom PDF report summaries using completed cases with valid start and end dates.
 - Added Investigation Subject to completed and in-progress case entry, storage, list views, detail views, and search.
 - Fixed Agency and Offense alphabetical sorting so mixed capitalization sorts consistently, and added A-Z and Z-A options.
+- Alphabetized all case-entry combo values without regard to capitalization, including Examiner, Investigator, Agency, location, Offense Type, Device Type, and Forensic Tool lists.
 - Improved PDF detail-table wrapping and section pagination to prevent long values from overlapping columns or leaving orphaned table continuations.
 - Added regression coverage for subject search, alphabetical sorting in both directions, and scoped turnaround calculations.
 
