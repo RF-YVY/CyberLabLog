@@ -1344,6 +1344,23 @@ tbody tr:hover {
   margin-top: 16px;
 }
 
+.location-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--card) 82%, var(--primary));
+}
+
+.location-tools .muted {
+  max-width: 760px;
+  font-size: 13px;
+}
+
 .primary-action,
 .ghost-action,
 .complete-action {
@@ -1889,6 +1906,32 @@ tbody tr:hover {
   margin-bottom: 4px;
 }
 
+.map-head-actions {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+}
+
+.map-refresh-result {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 14px;
+  border: 1px solid color-mix(in srgb, var(--primary) 55%, var(--border));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--primary) 10%, var(--card));
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+
+.map-refresh-result.warning {
+  border-color: color-mix(in srgb, var(--danger) 60%, var(--border));
+}
+
+.map-refresh-result small {
+  color: var(--muted);
+}
+
 .map-focus-picker {
   display: grid;
   gap: 6px;
@@ -2115,6 +2158,7 @@ tbody tr:hover {
   .analytics-head,
   .wizard-actions,
   .map-head,
+  .map-head-actions,
   .toolbar,
   .table-meta {
     align-items: stretch;

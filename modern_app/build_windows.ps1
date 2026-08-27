@@ -34,6 +34,7 @@ try {
         "--add-data", "frontend\dist;frontend\dist",
         "--hidden-import", "main",
         "--hidden-import", "database",
+        "--hidden-import", "geocoding",
         "--hidden-import", "paths",
         "--hidden-import", "legacy_import",
         "--hidden-import", "exports",

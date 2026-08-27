@@ -12,6 +12,10 @@ The migration goals are:
   rebuilt.
 - Allow users to either place the legacy database/app data in the app folder or
   import them from inside the new application.
+- Geocode new and edited city/state locations, while supporting named landmarks
+  and exact GPS coordinates for locations without postal addresses.
+- Recheck existing completed and in-progress cases from the Map page; successful
+  lookups are cached so future scans only retry unresolved locations.
 
 ## Architecture
 

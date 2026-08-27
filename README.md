@@ -6,7 +6,12 @@ Download the EXE from Releases, place it in a folder on your PC, and create a de
 
 ![CyberLab Case Tracker modern browser UI](docs/images/cyberlab-modern-browser-ui.png)
 
-## Current Release: v3.0.9
+## Current Release: v3.0.10
+
+- Automatically geocodes new and edited case locations so new cities appear on the map.
+- Adds specific landmark and exact latitude/longitude support for islands, offshore sites, and other locations without postal addresses.
+- Adds **Refresh Missing Locations** to scan completed and in-progress existing cases, cache successful coordinates, and report unresolved locations.
+- Removes the interactive map's previous 80-location cap and carries precise landmark coordinates into native map exports.
 
 - Populates the Cases pane Investigation Subject column from the existing "Subject Name of Investigation" case field.
 - Makes legacy custom-field subject values searchable and preserves them when editing older cases.
@@ -59,7 +64,7 @@ Download the EXE from Releases, place it in a folder on your PC, and create a de
 - **Workflow Retention:** Last-used Examiner, Investigator, Agency, City, State, Offense Type, and Device Type persist after saving so repeated sub-case entry is faster.
 - **Cases View:** Browse, search, sort, view, edit, duplicate, and delete completed cases.
 - **In-Progress View:** Track active cases, edit workflow status, duplicate work items, and complete in-progress cases into the main case log.
-- **Map View:** Visualize geocoded case locations with selectable map focus and custom transparent map markers.
+- **Map View:** Visualize city/state or named landmark locations, with optional exact GPS coordinates, selectable map focus, custom transparent map markers, and an on-demand scan that maps uncached locations from existing cases.
 - **Graphs:** Preview analytics by offense type, agency, device type, examiner, investigator, city, state, tools, and volume totals.
 - **Reports:** Export PDF, XLSX, CSV, graph snapshots, map HTML, and map data files from the modern native export engine.
 - **Custom Workload Reports:** Summarize devices, device types, and processed volume for a selected period and Examiner, Investigator, or Agency.
@@ -118,7 +123,7 @@ When importing cases from an Excel file, the following column headers are **requ
 
 - All case data is stored locally in an encrypted SQLite database (`caselog_gui_v6.db`).
 - User preferences and settings are stored in the `app_data` directory.
-- No data is sent to the cloud or external servers.
+- Case records remain local. When automatic map lookup is used, only the entered location, city, and state are sent to OpenStreetMap's Nominatim geocoding service; exact coordinates can be entered instead.
 
 ## Requirements
 

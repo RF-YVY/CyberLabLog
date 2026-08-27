@@ -17,6 +17,9 @@ CASE_COLUMNS = [
     "agency",
     "city_of_offense",
     "state_of_offense",
+    "location_name",
+    "latitude",
+    "longitude",
     "start_date",
     "end_date",
     "volume_size_gb",
@@ -40,6 +43,9 @@ CASE_WRITE_COLUMNS = [
     "agency",
     "city_of_offense",
     "state_of_offense",
+    "location_name",
+    "latitude",
+    "longitude",
     "start_date",
     "end_date",
     "volume_size_gb",
@@ -204,6 +210,9 @@ def ensure_schema() -> None:
                 volume_size_gb REAL,
                 city_of_offense TEXT,
                 state_of_offense TEXT,
+                location_name TEXT,
+                latitude REAL,
+                longitude REAL,
                 investigator TEXT,
                 investigation_subject TEXT,
                 agency TEXT,
@@ -231,6 +240,9 @@ def ensure_schema() -> None:
                 volume_size_gb REAL,
                 city_of_offense TEXT,
                 state_of_offense TEXT,
+                location_name TEXT,
+                latitude REAL,
+                longitude REAL,
                 investigator TEXT,
                 investigation_subject TEXT,
                 agency TEXT,
@@ -272,6 +284,9 @@ def ensure_schema() -> None:
                 migrations = {
                     "custom_fields": "TEXT",
                     "investigation_subject": "TEXT",
+                    "location_name": "TEXT",
+                    "latitude": "REAL",
+                    "longitude": "REAL",
                 }
                 for column, column_type in migrations.items():
                     if column not in existing:
@@ -416,7 +431,7 @@ def list_in_progress(
 def _normalize_case_payload(payload: dict[str, Any], in_progress: bool = False) -> dict[str, Any]:
     allowed = IN_PROGRESS_WRITE_COLUMNS if in_progress else CASE_WRITE_COLUMNS
     data = {key: payload.get(key) for key in allowed}
-    for key in ("case_number", "examiner", "investigator", "investigation_subject", "agency", "city_of_offense", "state_of_offense", "offense_type", "device_type", "model", "os", "forensic_tool", "notes", "priority", "workflow_status"):
+    for key in ("case_number", "examiner", "investigator", "investigation_subject", "agency", "city_of_offense", "state_of_offense", "location_name", "offense_type", "device_type", "model", "os", "forensic_tool", "notes", "priority", "workflow_status"):
         if key in data and data[key] is not None:
             data[key] = str(data[key]).strip()
     if "custom_fields" in data:
@@ -437,6 +452,15 @@ def _normalize_case_payload(payload: dict[str, Any], in_progress: bool = False) 
         data["volume_size_gb"] = None
     else:
         data["volume_size_gb"] = float(data["volume_size_gb"])
+    for coordinate, minimum, maximum in (("latitude", -90, 90), ("longitude", -180, 180)):
+        if data.get(coordinate) in ("", None):
+            data[coordinate] = None
+        else:
+            data[coordinate] = float(data[coordinate])
+            if not minimum <= data[coordinate] <= maximum:
+                raise ValueError(f"{coordinate.replace('_', ' ').title()} must be between {minimum} and {maximum}.")
+    if (data.get("latitude") is None) != (data.get("longitude") is None):
+        raise ValueError("Latitude and longitude must be entered together.")
     dr_val = data.get("data_recovered")
     if isinstance(dr_val, bool):
         data["data_recovered"] = "Yes" if dr_val else "No"
@@ -625,21 +649,34 @@ def get_map_markers() -> list[dict[str, Any]]:
     with connect() as conn:
         rows = conn.execute(
             """
+            WITH c AS (
+                SELECT city_of_offense, state_of_offense, location_name, latitude, longitude, volume_size_gb
+                FROM case_log
+                UNION ALL
+                SELECT city_of_offense, state_of_offense, location_name, latitude, longitude, volume_size_gb
+                FROM in_progress_cases
+            )
             SELECT
-                c.city_of_offense AS city,
+                COALESCE(NULLIF(TRIM(c.location_name), ''), TRIM(c.city_of_offense)) AS city,
                 c.state_of_offense AS state,
                 COUNT(*) AS case_count,
                 COALESCE(SUM(c.volume_size_gb), 0) AS total_volume_gb,
-                g.latitude,
-                g.longitude
-            FROM case_log c
+                COALESCE(c.latitude, g.latitude) AS latitude,
+                COALESCE(c.longitude, g.longitude) AS longitude
+            FROM c
             LEFT JOIN geocache g
-                ON g.location_key = TRIM(c.city_of_offense) || '|' || TRIM(c.state_of_offense)
-            WHERE COALESCE(TRIM(c.city_of_offense), '') <> ''
-              AND COALESCE(TRIM(c.state_of_offense), '') <> ''
-            GROUP BY city, state, g.latitude, g.longitude
+                ON g.location_key = CASE
+                    WHEN COALESCE(TRIM(c.location_name), '') <> ''
+                    THEN TRIM(c.location_name) || '|' || TRIM(c.city_of_offense) || '|' || TRIM(c.state_of_offense)
+                    ELSE TRIM(c.city_of_offense) || '|' || TRIM(c.state_of_offense)
+                END
+            WHERE COALESCE(TRIM(c.location_name), TRIM(c.city_of_offense), '') <> ''
+            GROUP BY
+                COALESCE(NULLIF(TRIM(c.location_name), ''), TRIM(c.city_of_offense)),
+                c.state_of_offense,
+                COALESCE(c.latitude, g.latitude),
+                COALESCE(c.longitude, g.longitude)
             ORDER BY case_count DESC, city ASC
-            LIMIT 80
             """
         ).fetchall()
     return [

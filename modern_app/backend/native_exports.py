@@ -307,7 +307,7 @@ def _map_points(
     map_settings: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     settings = map_settings or {}
-    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    grouped: dict[tuple[str, str, float | None, float | None], dict[str, Any]] = {}
     geocache = _geocache_lookup()
     source_rows: list[tuple[str, dict[str, Any]]] = []
     if settings.get("include_completed", True):
@@ -316,13 +316,17 @@ def _map_points(
         source_rows.extend(("In Progress", row) for row in (progress_rows or []))
 
     for status, row in source_rows:
-        city = str(row.get("city_of_offense") or "").strip()
+        city_name = str(row.get("city_of_offense") or "").strip()
+        location_name = str(row.get("location_name") or "").strip()
+        city = location_name or city_name
         state = str(row.get("state_of_offense") or "").strip()
-        if not city or not state:
+        if not city:
             continue
-        key = (city, state)
-        location_key = f"{city}|{state}"
+        location_key = f"{location_name}|{city_name}|{state}" if location_name else f"{city_name}|{state}"
         lat_lon = geocache.get(location_key)
+        latitude = row.get("latitude") if row.get("latitude") is not None else (lat_lon[0] if lat_lon else None)
+        longitude = row.get("longitude") if row.get("longitude") is not None else (lat_lon[1] if lat_lon else None)
+        key = (city, state, latitude, longitude)
         item = grouped.setdefault(
             key,
             {
@@ -332,8 +336,8 @@ def _map_points(
                 "completed_count": 0,
                 "in_progress_count": 0,
                 "total_volume_gb": 0.0,
-                "latitude": lat_lon[0] if lat_lon else None,
-                "longitude": lat_lon[1] if lat_lon else None,
+                "latitude": latitude,
+                "longitude": longitude,
                 "cases": [],
             },
         )

@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.10] - 2026-08-27
+- Fixed modern map updates by geocoding new or edited case locations instead of relying only on legacy cached coordinates.
+- Added landmark/location and latitude/longitude fields for islands, offshore sites, rural areas, and other places without postal codes.
+- Added a Find Coordinates action with progressively broader landmark lookup that never discards the named landmark.
+- Included in-progress cases and all unique locations on the interactive map, removing the previous 80-location display cap.
+- Added a Map refresh action that scans existing cases once, permanently caches successful locations, and reports entries that still need a landmark or GPS coordinates.
+- Updated native map exports to honor landmark names and exact case coordinates.
+
 ## [3.0.9] - 2026-08-12
 - Fixed the Cases pane so Investigation Subject resolves values entered under the existing "Subject Name of Investigation" case field.
 - Added compatibility for older subject values stored in customized case fields, including list display, editing, and search.

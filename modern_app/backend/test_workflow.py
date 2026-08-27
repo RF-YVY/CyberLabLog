@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import database
 import cyberlab_workflow as workflow
@@ -12,6 +13,7 @@ import portable_backup
 import custom_report
 import native_exports
 import main as backend_main
+import geocoding
 
 
 class WorkflowTests(unittest.TestCase):
@@ -72,6 +74,59 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(offenses_desc, ["Theft", "Burglary", "arson"])
         self.assertEqual([row["case_number"] for row in matches], ["CC-26-1000"])
         self.assertEqual(matches[0]["investigation_subject"], "Jordan Smith")
+
+    def test_landmark_coordinates_create_a_map_marker_without_postal_code(self) -> None:
+        row = database.create_case(
+            {
+                "case_number": "CC-26-ISLAND",
+                "city_of_offense": "Pascagoula",
+                "state_of_offense": "MS",
+                "location_name": "Horn Island",
+                "latitude": 30.238,
+                "longitude": -88.681,
+            }
+        )
+
+        self.assertEqual(row["location_name"], "Horn Island")
+        marker = database.get_map_markers()[0]
+        self.assertEqual(marker["city"], "Horn Island")
+        self.assertAlmostEqual(marker["latitude"], 30.238)
+        self.assertAlmostEqual(marker["longitude"], -88.681)
+
+    def test_city_geocache_is_used_for_new_map_locations(self) -> None:
+        geocoding.cache_coordinates("Pascagoula|MS", 30.3658, -88.5561)
+        database.create_case(
+            {
+                "case_number": "CC-26-PASCAGOULA",
+                "city_of_offense": "Pascagoula",
+                "state_of_offense": "MS",
+            }
+        )
+
+        marker = database.get_map_markers()[0]
+        self.assertEqual(marker["city"], "Pascagoula")
+        self.assertAlmostEqual(marker["latitude"], 30.3658)
+        self.assertAlmostEqual(marker["longitude"], -88.5561)
+
+    def test_refresh_geocodes_only_missing_existing_locations(self) -> None:
+        database.create_case({"case_number": "CC-CACHED", "city_of_offense": "Oxford", "state_of_offense": "MS"})
+        database.create_case({"case_number": "CC-MISSING", "city_of_offense": "Pascagoula", "state_of_offense": "MS"}, in_progress=True)
+        geocoding.cache_coordinates("Oxford|MS", 34.3665, -89.5192)
+
+        def fake_geocode(payload, timeout=5.0):
+            key = geocoding.location_key(payload)
+            geocoding.cache_coordinates(key, 30.3647, -88.5586)
+            return {"latitude": 30.3647, "longitude": -88.5586, "source": "nominatim", "location_key": key}
+
+        with patch.object(geocoding, "geocode_payload", side_effect=fake_geocode) as lookup, patch.object(geocoding.time, "sleep"):
+            result = geocoding.geocode_missing_case_locations()
+
+        self.assertEqual(result["locations_checked"], 2)
+        self.assertEqual(result["already_mapped"], 1)
+        self.assertEqual(result["geocoded"], 1)
+        self.assertEqual(result["unresolved"], [])
+        self.assertEqual(lookup.call_count, 1)
+        self.assertTrue(any(marker["city"] == "Pascagoula" for marker in database.get_map_markers()))
 
     def test_combo_values_are_alphabetical_and_case_insensitive(self) -> None:
         self.create_case("CC-26-1010", agency="zeta Agency", offense="Theft")

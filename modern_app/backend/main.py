@@ -44,6 +44,7 @@ from database import (
 from exports import run_automated_exports_bridge
 from custom_report import custom_report_data, generate_custom_csv, generate_custom_pdf
 from family_report import generate_case_family_pdf
+from geocoding import ensure_location_cached, geocode_missing_case_locations, geocode_payload
 from legacy_import import import_app_data_zip, import_database_file
 from native_exports import run_native_exports
 from portable_backup import create_encrypted_backup, restore_encrypted_backup
@@ -79,7 +80,7 @@ FRONTEND_ASSETS = FRONTEND_DIST / "assets"
 RUNTIME_STARTED_AT = time.monotonic()
 LAST_BROWSER_HEARTBEAT = 0.0
 SHUTDOWN_REQUESTED = False
-APP_VERSION = "3.0.9"
+APP_VERSION = "3.0.10"
 GITHUB_REPO = "RF-YVY/CyberLabLog"
 UPDATE_CACHE_TTL_SECONDS = 900
 UPDATE_CACHE: dict[str, Any] = {"checked_at": 0.0, "value": None}
@@ -236,6 +237,9 @@ class CasePayload(BaseModel):
     agency: str | None = None
     city_of_offense: str | None = None
     state_of_offense: str | None = None
+    location_name: str | None = None
+    latitude: float | str | None = None
+    longitude: float | str | None = None
     start_date: str | None = None
     end_date: str | None = None
     volume_size_gb: float | str | None = None
@@ -612,6 +616,7 @@ def cases(
 def create_completed_case(payload: CasePayload) -> dict[str, Any]:
     try:
         result = create_case(payload.model_dump(), in_progress=False)
+        ensure_location_cached(result)
         record_audit("case", result.get("id"), "created", result.get("case_number"), "Completed case created", case_changes(None, result))
         return result
     except Exception as exc:
@@ -623,6 +628,7 @@ def update_completed_case(case_id: int, payload: CasePayload) -> dict[str, Any]:
     try:
         before = get_case(case_id, in_progress=False)
         result = update_case(case_id, payload.model_dump(), in_progress=False)
+        ensure_location_cached(result)
         record_audit("case", case_id, "updated", result.get("case_number"), "Completed case updated", case_changes(before, result))
         return result
     except Exception as exc:
@@ -663,6 +669,7 @@ def in_progress_cases(
 def create_in_progress_case(payload: CasePayload) -> dict[str, Any]:
     try:
         result = create_case(payload.model_dump(), in_progress=True)
+        ensure_location_cached(result)
         record_audit("case", result.get("id"), "created", result.get("case_number"), "In-progress case created", case_changes(None, result))
         return result
     except Exception as exc:
@@ -674,6 +681,7 @@ def update_in_progress_case(case_id: int, payload: CasePayload) -> dict[str, Any
     try:
         before = get_case(case_id, in_progress=True)
         result = update_case(case_id, payload.model_dump(), in_progress=True)
+        ensure_location_cached(result)
         record_audit("case", case_id, "updated", result.get("case_number"), "In-progress case updated", case_changes(before, result))
         return result
     except Exception as exc:
@@ -727,6 +735,20 @@ def analytics_summary() -> dict[str, Any]:
 @app.get("/api/map/markers")
 def map_markers() -> dict[str, Any]:
     return {"markers": get_map_markers()}
+
+
+@app.post("/api/map/geocode")
+def geocode_case_location(payload: CasePayload) -> dict[str, Any]:
+    result = geocode_payload(payload.model_dump())
+    if not result:
+        raise HTTPException(status_code=404, detail="Location could not be found. Enter GPS coordinates or refine the location, city, and state.")
+    return result
+
+
+@app.post("/api/map/geocode-missing")
+def geocode_missing_locations() -> dict[str, Any]:
+    result = geocode_missing_case_locations()
+    return {**result, "markers": get_map_markers()}
 
 
 @app.get("/api/dashboard")

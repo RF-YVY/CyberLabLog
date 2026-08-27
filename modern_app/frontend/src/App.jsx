@@ -55,6 +55,9 @@ const blankCase = {
   agency: "",
   city_of_offense: "",
   state_of_offense: "",
+  location_name: "",
+  latitude: "",
+  longitude: "",
   start_date: "",
   end_date: "",
   volume_size_gb: "",
@@ -102,6 +105,9 @@ const caseFieldDefinitions = [
   ["agency", "Agency"],
   ["city_of_offense", "City of Offense"],
   ["state_of_offense", "State"],
+  ["location_name", "Specific Location / Landmark"],
+  ["latitude", "Latitude"],
+  ["longitude", "Longitude"],
   ["start_date", "Start Date"],
   ["end_date", "End Date"],
   ["volume_size_gb", "Volume (GB)"],
@@ -369,6 +375,8 @@ function payloadFromForm(form) {
     ...form,
     device_type: normalizeDeviceType(form.device_type),
     volume_size_gb: form.volume_size_gb === "" ? null : Number(form.volume_size_gb),
+    latitude: form.latitude === "" ? null : Number(form.latitude),
+    longitude: form.longitude === "" ? null : Number(form.longitude),
   };
 }
 
@@ -462,7 +470,7 @@ function hasDraftContent(form) {
   return Boolean(form?.case_number || form?.start_date || form?.model || form?.notes || form?.volume_size_gb);
 }
 
-function Field({ label, name, form, setForm, type = "text", options, suggestions = [] }) {
+function Field({ label, name, form, setForm, type = "text", step, options, suggestions = [] }) {
   const value = form[name] ?? "";
   const listId = suggestions.length ? `${name}-suggestions` : undefined;
   const common = {
@@ -480,7 +488,7 @@ function Field({ label, name, form, setForm, type = "text", options, suggestions
         </select>
       ) : (
         <>
-          <input type={type} list={listId} {...common} />
+          <input type={type} step={step} list={listId} {...common} />
           {listId && (
             <datalist id={listId}>
               {suggestions.map((option) => <option key={option} value={option} />)}
@@ -501,6 +509,7 @@ function CaseForm({
   onCancelEdit,
   onSaveInProgress,
   onComplete,
+  onGeocode,
   comboValues = {},
   uiCustomization = defaultUiCustomization,
 }) {
@@ -521,6 +530,9 @@ function CaseForm({
         {renderField("agency", "Agency", { suggestions: comboValues.agency || [] })}
         {renderField("city_of_offense", "City of Offense", { suggestions: comboValues.city_of_offense || [] })}
         {renderField("state_of_offense", "State", { suggestions: comboValues.state_of_offense || [] })}
+        {renderField("location_name", "Specific Location / Landmark")}
+        {renderField("latitude", "Latitude", { type: "number", step: "any" })}
+        {renderField("longitude", "Longitude", { type: "number", step: "any" })}
         {renderField("start_date", "Start Date", { type: "date" })}
         {renderField("end_date", "End Date", { type: "date" })}
         {renderField("volume_size_gb", "Volume (GB)", { type: "number" })}
@@ -547,6 +559,15 @@ function CaseForm({
           />
         ))}
       </div>
+      {visible("location_name") && (
+        <div className="location-tools">
+          <span className="muted">Use a landmark such as Horn Island, or enter both GPS coordinates for an exact point. A ZIP code is not required.</span>
+          <button className="ghost-action" type="button" onClick={() => onGeocode?.(form, setForm)} disabled={busy || (!form.location_name && !form.city_of_offense)}>
+            <MapPin size={16} />
+            Find Coordinates
+          </button>
+        </div>
+      )}
       {visible("notes") && (
         <label className="field full-width">
           <span>{label("notes", "Notes")}</span>
@@ -622,13 +643,15 @@ function App() {
   const [analytics, setAnalytics] = useState({});
   const [analyticsGroup, setAnalyticsGroup] = useState(() => localStorage.getItem("cyberlab-analytics-group") || "core");
   const [mapMarkers, setMapMarkers] = useState([]);
+  const [mapRefreshing, setMapRefreshing] = useState(false);
+  const [mapGeocodeResult, setMapGeocodeResult] = useState(null);
   const [selectedCase, setSelectedCase] = useState(null);
   const [exportResult, setExportResult] = useState(null);
   const [outputFiles, setOutputFiles] = useState({ exists: false, files: [] });
   const [comboValues, setComboValues] = useState({});
   const [logoInfo, setLogoInfo] = useState({ exists: false, path: "" });
   const [markerIconInfo, setMarkerIconInfo] = useState({ exists: false, path: "" });
-  const [appInfo, setAppInfo] = useState({ name: "CyberLab Case Tracker", version: "3.0.9", update_available: false });
+  const [appInfo, setAppInfo] = useState({ name: "CyberLab Case Tracker", version: "3.0.10", update_available: false });
   const [appProfile, setAppProfile] = useState(defaultAppProfile);
   const [mapPreferences, setMapPreferences] = useState(defaultMapPreferences);
   const [browserPreferences, setBrowserPreferences] = useState(defaultBrowserPreferences);
@@ -730,7 +753,7 @@ function App() {
     try {
       const [healthData, appInfoData, profileData, uiCustomizationData, mapPreferenceData, browserPreferenceData, themePreferenceData, caseData, progressData, configData, schedulerData, analyticsData, markerData, comboData, logoData, markerIconData, backupData, dashboardData, qualityData, familyData, templateData, workQueueData] = await Promise.all([
         api("/api/health"),
-        api("/api/app-info").catch(() => ({ name: "CyberLab Case Tracker", version: "3.0.9", update_available: false })),
+        api("/api/app-info").catch(() => ({ name: "CyberLab Case Tracker", version: "3.0.10", update_available: false })),
         api("/api/settings/json/app_profile").catch(() => ({ value: defaultAppProfile })),
         api("/api/settings/json/ui_customization").catch(() => ({ value: defaultUiCustomization })),
         api("/api/settings/json/map_preferences").catch(() => ({ value: defaultMapPreferences })),
@@ -753,7 +776,7 @@ function App() {
         api("/api/work-queue").catch(() => ({ rows: [] })),
       ]);
       setHealth(healthData);
-      setAppInfo(appInfoData || { name: "CyberLab Case Tracker", version: "3.0.9", update_available: false });
+      setAppInfo(appInfoData || { name: "CyberLab Case Tracker", version: "3.0.10", update_available: false });
       setAppProfile({ ...defaultAppProfile, ...(profileData.value || {}) });
       setUiCustomization({ ...defaultUiCustomization, ...(uiCustomizationData.value || {}) });
       setMapPreferences({ ...defaultMapPreferences, ...(mapPreferenceData.value || {}) });
@@ -842,6 +865,23 @@ function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ value }),
     }).catch(() => null)));
+  }
+
+  async function geocodeCaseForm(form, setForm) {
+    setBusy(true);
+    try {
+      const result = await api("/api/map/geocode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payloadFromForm(form)),
+      });
+      setForm((current) => ({ ...current, latitude: result.latitude, longitude: result.longitude }));
+      setStatus(`Location found: ${result.display_name || `${Number(result.latitude).toFixed(5)}, ${Number(result.longitude).toFixed(5)}`}`);
+    } catch (error) {
+      setStatus(`Location lookup failed: ${error.message}`);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function removeCase(id, mode = "completed") {
@@ -1266,6 +1306,26 @@ function App() {
     }
   }
 
+  async function refreshMissingMapLocations() {
+    setMapRefreshing(true);
+    setMapGeocodeResult(null);
+    setStatus("Checking existing cases for missing map locations...");
+    try {
+      const result = await api("/api/map/geocode-missing", { method: "POST" });
+      setMapMarkers(result.markers || []);
+      setMapGeocodeResult(result);
+      if (result.missing_checked === 0) {
+        setStatus(`All ${result.locations_checked} unique case locations are already mapped`);
+      } else {
+        setStatus(`Mapped ${result.geocoded} of ${result.missing_checked} missing locations`);
+      }
+    } catch (error) {
+      setStatus(`Map location refresh failed: ${error.message}`);
+    } finally {
+      setMapRefreshing(false);
+    }
+  }
+
   async function updateBrowserPreference(preferred_browser) {
     const next = { ...browserPreferences, preferred_browser };
     setBrowserPreferences(next);
@@ -1659,7 +1719,7 @@ function App() {
       .map((tab) => [`custom:${tab.key}`, tab.label || tab.key]);
     return [...builtIns, ...customTabs];
   }, [uiCustomization]);
-  const appVersionLabel = `v${appInfo.version || "3.0.9"}`;
+  const appVersionLabel = `v${appInfo.version || "3.0.10"}`;
 
   useEffect(() => {
     if (navItems.length && !navItems.some(([key]) => key === activeTab)) {
@@ -1885,6 +1945,7 @@ function App() {
                 onSubmit={(event) => saveCase(event, "completed")}
                 onSaveInProgress={saveNewCaseInProgress}
                 onCancelEdit={() => setCaseForm(blankCase)}
+                onGeocode={geocodeCaseForm}
                 mode="completed"
                 busy={busy}
                 comboValues={comboValues}
@@ -1910,6 +1971,7 @@ function App() {
                     onSubmit={(event) => saveCase(event, "progress")}
                     onCancelEdit={cancelInProgressEdit}
                     onComplete={completeEditedCase}
+                    onGeocode={geocodeCaseForm}
                     mode="progress"
                     busy={busy}
                     comboValues={comboValues}
@@ -2178,14 +2240,29 @@ function App() {
               <div className="map-head">
                 <div>
                   <h2><MapPinned size={18} /> Map View</h2>
+                  <p className="muted">Existing locations are cached after lookup, so later checks only retry locations that remain unresolved.</p>
                 </div>
-                <label className="map-focus-picker">
-                  <span>Focal Point</span>
-                  <select value={mapPreferences.focus || "mississippi"} onChange={(event) => updateMapFocus(event.target.value)}>
-                    {mapFocusOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                  </select>
-                </label>
+                <div className="map-head-actions">
+                  <button className="ghost-action" type="button" onClick={refreshMissingMapLocations} disabled={mapRefreshing}>
+                    <RefreshCw size={16} className={mapRefreshing ? "spin" : ""} />
+                    {mapRefreshing ? "Checking Locations..." : "Refresh Missing Locations"}
+                  </button>
+                  <label className="map-focus-picker">
+                    <span>Focal Point</span>
+                    <select value={mapPreferences.focus || "mississippi"} onChange={(event) => updateMapFocus(event.target.value)}>
+                      {mapFocusOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                    </select>
+                  </label>
+                </div>
               </div>
+              {mapGeocodeResult && (
+                <div className={`map-refresh-result ${mapGeocodeResult.unresolved?.length ? "warning" : "success"}`}>
+                  <strong>{mapGeocodeResult.geocoded} newly mapped</strong>
+                  <span>{mapGeocodeResult.already_mapped} already mapped</span>
+                  <span>{mapGeocodeResult.unresolved?.length || 0} unresolved</span>
+                  {mapGeocodeResult.unresolved?.length > 0 && <small>Needs a landmark or GPS coordinates: {mapGeocodeResult.unresolved.join("; ")}</small>}
+                </div>
+              )}
               <InteractiveMap markers={mapMarkers} markerIconInfo={markerIconInfo} mapPreferences={mapPreferences} />
             </section>
           )}
@@ -2672,6 +2749,8 @@ function CaseDetailModal({ row, onClose, onEdit, onDuplicate, onNextSubcase, onC
     ["investigation_subject", "Subject Name of Investigation", investigationSubjectValue(row, uiCustomization)],
     ["agency", "Agency", row.agency],
     ["city_of_offense", "City/State", `${formatValue(row.city_of_offense)}, ${formatValue(row.state_of_offense)}`],
+    ["location_name", "Specific Location", row.location_name],
+    ["coordinates", "Coordinates", row.latitude != null && row.longitude != null ? `${row.latitude}, ${row.longitude}` : ""],
     ["start_date", "Dates", `${formatValue(row.start_date)} to ${formatValue(row.end_date)}`],
     ["volume_size_gb", "Volume", row.volume_size_gb ? formatVolume(row.volume_size_gb) : ""],
     ["offense_type", "Offense", row.offense_type],
@@ -2805,7 +2884,7 @@ function ZoomAwareMarkers({ markers, markerIconInfo }) {
             });
         return (
           <Marker
-            key={`${marker.city}-${marker.state}`}
+            key={`${marker.city}-${marker.state}-${marker.latitude}-${marker.longitude}`}
             position={[Number(marker.latitude), Number(marker.longitude)]}
             icon={icon}
           >
@@ -2829,7 +2908,7 @@ function MapFocusController({ markers, mapPreferences }) {
 
   useEffect(() => {
     const option = mapFocusOptions.find(([value]) => value === focus)?.[2] || mapFocusOptions[0][2];
-    const geocoded = (markers || []).filter((marker) => marker.latitude && marker.longitude);
+    const geocoded = (markers || []).filter((marker) => marker.latitude != null && marker.longitude != null);
 
     if (focus === "case_markers" && geocoded.length) {
       const bounds = geocoded.map((marker) => [Number(marker.latitude), Number(marker.longitude)]);
@@ -2850,7 +2929,7 @@ function MapFocusController({ markers, mapPreferences }) {
 
 function InteractiveMap({ markers, markerIconInfo, mapPreferences }) {
   const geocodedMarkers = useMemo(() => {
-    return (markers || []).filter((marker) => marker.latitude && marker.longitude);
+    return (markers || []).filter((marker) => marker.latitude != null && marker.longitude != null);
   }, [markers]);
   const selectedFocus = mapFocusOptions.find(([value]) => value === (mapPreferences?.focus || "mississippi"))?.[2] || mapFocusOptions[0][2];
   const center = selectedFocus.bounds
@@ -2874,11 +2953,11 @@ function InteractiveMap({ markers, markerIconInfo, mapPreferences }) {
       </div>
       <div className="marker-grid">
         {(markers || []).slice(0, 18).map((marker) => (
-          <article className="marker-card" key={`${marker.city}-${marker.state}`}>
+          <article className="marker-card" key={`${marker.city}-${marker.state}-${marker.latitude}-${marker.longitude}`}>
             <MapPin size={16} />
             <strong>{marker.city}, {marker.state}</strong>
             <span>{marker.case_count} cases / {formatVolume(marker.total_volume_gb)}</span>
-            <small>{marker.latitude && marker.longitude ? `${Number(marker.latitude).toFixed(3)}, ${Number(marker.longitude).toFixed(3)}` : "Not geocoded"}</small>
+            <small>{marker.latitude != null && marker.longitude != null ? `${Number(marker.latitude).toFixed(3)}, ${Number(marker.longitude).toFixed(3)}` : "Not geocoded"}</small>
           </article>
         ))}
       </div>
