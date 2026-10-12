@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.11] - 2026-10-12
+- Made case workspaces the default Cases view, grouping completed and in-progress evidence with shared case information and View, Edit, and next-item actions.
+- Separated shared case information from evidence details during intake and simplified submissions to a destination selector, Save & Finish, and Save & Add Next Evidence Item.
+- Added saved-item summaries and quick editing during consecutive evidence entry; numbering considers both case lists.
+- Added visible draft-save feedback, a Keep draft & leave dialog, and browser-close protection for unfinished entries.
+- Added persistent table column selections and comfortable/compact spacing to completed and in-progress lists.
+- Added inline case-number, volume, coordinate, and date validation and preserved save confirmations during data refreshes.
+- Refined the Lab Light and Lab Dark themes with restrained accents, consistent spacing, and status labels; retained the other theme choices.
+- Added frontend carryover and validation regression tests.
+
 ## [3.0.10] - 2026-08-27
 - Fixed modern map updates by geocoding new or edited case locations instead of relying only on legacy cached coordinates.
 - Added landmark/location and latitude/longitude fields for islands, offshore sites, rural areas, and other places without postal codes.

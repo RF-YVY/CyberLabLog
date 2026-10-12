@@ -61,8 +61,8 @@ import pandas as pd
 from ttkbootstrap.style import Colors, ThemeDefinition
 # --- App Constants & Paths ---
 APP_NAME = "CyberLab Case Tracker"
-APP_VERSION = "3.0.2.1"  # Increment before each build
-RELEASE_DATE = "Nov 25, 2025"  # Update before each build
+APP_VERSION = "3.0.11"  # Increment before each build
+RELEASE_DATE = "Oct 12, 2026"  # Update before each build
 # Determine a persistent base directory:
 # - When frozen by PyInstaller (--onefile), use the folder containing the executable
 #   so data (DB, app_data) persists across runs.

@@ -1,5 +1,7 @@
 # CyberLab Modernization
 
+Current release: **v3.0.11** (October 12, 2026).
+
 This folder is the migration path from the legacy Tkinter desktop app to a modern
 browser UI with a Python backend.
 
@@ -34,7 +36,29 @@ python CyberLabCaseTracker.py --run-automated-exports
 That lets the new app modernize the interface without risking loss of the
 existing report and graph export behavior.
 
-## Development
+## Case and evidence workflow
+
+The Cases page opens to Case workspaces. Select a base case number to view all
+its completed and in-progress evidence items, or use the Cases tab for the
+completed-item table. Each workspace supports viewing, editing, and preparing
+the next evidence item.
+
+In New Case, choose Completed or In-Progress, then use Save & Finish or
+Save & Add Next Evidence Item. The latter keeps shared information, suggests
+the next available suffix across both lists, and clears device type, model,
+OS, volume, recovery results, and FPR completion. Saved items appear above the
+entry form with edit actions. Shared dates, notes, and custom fields carry over;
+review these if they differ for the next item.
+
+Draft feedback appears above the form. Leaving an unfinished entry keeps its
+draft; returning after a reload offers recovery. Choosing to replace an entry
+for editing requires confirmation. Table Columns and Row spacing settings are
+remembered per browser. Select Lab Light or Lab Dark in Settings for the refined
+professional themes.
+
+Run frontend regression checks with `npm test` from `frontend/`.
+
+## Development commands
 
 Backend:
 

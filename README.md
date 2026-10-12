@@ -6,7 +6,17 @@ Download the EXE from Releases, place it in a folder on your PC, and create a de
 
 ![CyberLab Case Tracker modern browser UI](docs/images/cyberlab-modern-browser-ui.png)
 
-## Current Release: v3.0.10
+## Current Release: v3.0.11
+
+- Opens the Cases page to **Case workspaces**, grouping Completed and In-Progress evidence under one base case number.
+- Separates shared case information from device details during intake.
+- Adds **Save & Add Next Evidence Item** and **Save & Finish**, with a Completed/In-Progress destination selector.
+- Carries shared information forward, clears device details and results, and suggests the next evidence suffix across both case lists.
+- Shows saved evidence items with quick editing, visible draft-save feedback, and an unfinished-entry warning.
+- Remembers table columns and comfortable/compact row spacing, adds inline field validation, and keeps save confirmations visible during refresh.
+- Refines the **Lab Light** and **Lab Dark** themes while retaining the other theme choices.
+
+### Features retained from earlier releases
 
 - Automatically geocodes new and edited case locations so new cities appear on the map.
 - Adds specific landmark and exact latitude/longitude support for islands, offshore sites, and other locations without postal addresses.
@@ -23,7 +33,7 @@ Download the EXE from Releases, place it in a folder on your PC, and create a de
 - Alphabetizes case-entry dropdown values consistently without regard to capitalization.
 - Improves PDF detail-table wrapping and section pagination for long agency and offense content.
 
-- Adds a **Place In Progress** action beside **Save Completed Case** in the New Case workflow.
+- Supports both Completed and In-Progress submissions directly from New Case.
 - Replaces the In Progress entry form with a searchable, filterable table of active cases and their workflow details.
 - Adds a **Completed** action while editing an in-progress case, saving final edits before moving it to completed cases.
 
@@ -61,7 +71,7 @@ Download the EXE from Releases, place it in a folder on your PC, and create a de
 ## Features
 
 - **Case Entry:** Add completed or in-progress digital forensic cases with examiner, investigator, investigation subject, agency, city, state, offense, device, volume, notes, FPR status, and recovered-data status.
-- **Workflow Retention:** Last-used Examiner, Investigator, Agency, City, State, Offense Type, and Device Type persist after saving so repeated sub-case entry is faster.
+- **Workflow Retention:** Save & Add Next Evidence Item preserves shared case information while clearing device details and results. Save & Finish retains common intake defaults for a new case.
 - **Cases View:** Browse, search, sort, view, edit, duplicate, and delete completed cases.
 - **In-Progress View:** Track active cases, edit workflow status, duplicate work items, and complete in-progress cases into the main case log.
 - **Map View:** Visualize city/state or named landmark locations, with optional exact GPS coordinates, selectable map focus, custom transparent map markers, and an on-demand scan that maps uncached locations from existing cases.

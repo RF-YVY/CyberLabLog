@@ -1,4 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { nextEvidenceForm } from "./evidenceEntry";
+import { validateCase, StatusBadge, ListControls, useListPreferences, IntakeItems, CaseWorkspace } from "./caseExperience";
 import {
   Activity,
   BarChart3,
@@ -126,8 +128,8 @@ const caseFieldDefinitions = [
 
 const themes = [
   ["cyber-blue", "Cyber Blue"],
-  ["signal-dark", "Signal Dark"],
-  ["day-shift", "Day Shift"],
+  ["signal-dark", "Lab Dark"],
+  ["day-shift", "Lab Light"],
   ["nebula-console", "Nebula Console"],
   ["tripwire-neon", "Tripwire Neon"],
   ["light-blue", "Light Blue"],
@@ -143,7 +145,7 @@ const themes = [
 ];
 
 const defaultThemePreferences = {
-  theme: "cyber-blue",
+  theme: "signal-dark",
   animations_enabled: true,
 };
 
@@ -371,8 +373,9 @@ function fileKind(name) {
 }
 
 function payloadFromForm(form) {
+  const { _nextEvidenceNotice, _errors, _destination, ...values } = form;
   return {
-    ...form,
+    ...values,
     device_type: normalizeDeviceType(form.device_type),
     volume_size_gb: form.volume_size_gb === "" ? null : Number(form.volume_size_gb),
     latitude: form.latitude === "" ? null : Number(form.latitude),
@@ -475,7 +478,11 @@ function Field({ label, name, form, setForm, type = "text", step, options, sugge
   const listId = suggestions.length ? `${name}-suggestions` : undefined;
   const common = {
     value,
-    onChange: (event) => setForm((current) => ({ ...current, [name]: event.target.value })),
+    name,
+    "aria-label": label,
+    "aria-invalid": Boolean(form._errors?.[name]),
+    "aria-describedby": form._errors?.[name] ? `${name}-error` : undefined,
+    onChange: (event) => setForm((current) => ({ ...current, [name]: event.target.value, _errors: { ...current._errors, [name]: undefined } })),
   };
   return (
     <label className="field">
@@ -496,6 +503,7 @@ function Field({ label, name, form, setForm, type = "text", step, options, sugge
           )}
         </>
       )}
+      {form._errors?.[name] && <small id={`${name}-error`} className="field-error" role="alert">{form._errors[name]}</small>}
     </label>
   );
 }
@@ -507,21 +515,29 @@ function CaseForm({
   mode,
   busy,
   onCancelEdit,
-  onSaveInProgress,
+  draft,
+  family,
+  onEditItem,
   onComplete,
   onGeocode,
   comboValues = {},
   uiCustomization = defaultUiCustomization,
 }) {
   const isEditing = Boolean(form.id);
+  const [nextDestination, setNextDestination] = useState(form._destination || mode);
+  useEffect(() => { if (form._destination) setNextDestination(form._destination); }, [form._destination]);
   const label = (key, fallback) => fieldLabel(uiCustomization, key, fallback);
-  const visible = (key) => fieldVisible(uiCustomization, key, mode);
+  const visible = (key) => fieldVisible(uiCustomization, key, isEditing ? mode : nextDestination);
   const customFieldDefs = uiCustomization.custom_fields || [];
   const renderField = (key, fallback, props = {}) => (
     visible(key) ? <Field label={label(key, fallback)} name={key} form={form} setForm={setForm} {...props} /> : null
   );
   return (
     <form className="case-form panel-enter" onSubmit={onSubmit}>
+      <div className="draft-status" role="status" aria-live="polite">{hasDraftContent(form) ? draft && JSON.stringify(draft.form) === JSON.stringify(form) ? `Draft saved · ${new Date(draft.savedAt).toLocaleTimeString()}` : "Saving draft…" : "Ready for a new case"}</div>
+      {family && <IntakeItems family={family} onEdit={onEditItem} />}
+      <h3 className="form-section-title">Shared case information <small>Kept for the next evidence item</small></h3>
+      {form._nextEvidenceNotice && <p className="evidence-entry-notice" role="status" aria-live="polite">{form._nextEvidenceNotice}</p>}
       <div className="form-grid">
         {renderField("case_number", "Case #")}
         {renderField("examiner", "Examiner", { suggestions: comboValues.examiner || [] })}
@@ -535,13 +551,9 @@ function CaseForm({
         {renderField("longitude", "Longitude", { type: "number", step: "any" })}
         {renderField("start_date", "Start Date", { type: "date" })}
         {renderField("end_date", "End Date", { type: "date" })}
-        {renderField("volume_size_gb", "Volume (GB)", { type: "number" })}
         {renderField("offense_type", "Offense Type", { suggestions: comboValues.offense_type || [] })}
-        {renderField("device_type", "Device Type", { options: deviceTypeOptions })}
-        {renderField("model", "Model")}
-        {renderField("os", "OS")}
         {renderField("forensic_tool", "Forensic Tool", { suggestions: comboValues.forensic_tool || [] })}
-        {mode === "progress" && (
+        {(isEditing ? mode : nextDestination) === "progress" && (
           <>
             {renderField("priority", "Priority", { options: ["Low", "Medium", "High", "Critical"] })}
             {renderField("workflow_status", "Workflow", { options: ["Intake", "Processing", "Reporting", "In Vault", "Ready for Completion"] })}
@@ -578,6 +590,13 @@ function CaseForm({
           />
         </label>
       )}
+      <h3 className="form-section-title">Evidence item details <small>Cleared for the next evidence item</small></h3>
+      <div className="form-grid">
+        {renderField("device_type", "Device Type", { options: deviceTypeOptions })}
+        {renderField("model", "Model")}
+        {renderField("os", "OS")}
+        {renderField("volume_size_gb", "Volume (GB)", { type: "number", step: "any" })}
+      </div>
       <div className="check-row">
         {visible("fpr_complete") && (
           <label>
@@ -592,16 +611,23 @@ function CaseForm({
         {renderField("data_recovered", "Data Recovered", { options: ["", "Yes", "No"] })}
       </div>
       <div className="form-actions">
-        <button className="primary-action" type="submit" disabled={busy}>
-          <Save size={17} />
-          {isEditing ? "Update Case" : mode === "progress" ? "Save In Progress" : "Save Completed Case"}
-        </button>
-        {!isEditing && mode === "completed" && onSaveInProgress && (
-          <button className="ghost-action" type="button" onClick={onSaveInProgress} disabled={busy}>
-            <Save size={17} />
-            Place In Progress
-          </button>
+        {!isEditing && (
+          <>
+            <label className="next-evidence-destination">
+              Save this evidence item to
+              <select name="save_destination" value={nextDestination} onChange={(event) => { setNextDestination(event.target.value); setForm(current => ({ ...current, _destination: event.target.value })); }} disabled={busy}>
+                <option value="completed">Completed</option>
+                <option value="progress">In-Progress</option>
+              </select>
+            </label>
+            <button className="primary-action" type="submit" value={`next-${nextDestination}`} disabled={busy}>
+              <Plus size={17} /> Save &amp; Add Next Evidence Item
+            </button>
+          </>
         )}
+        <button className="ghost-action" type="submit" value={isEditing ? "update" : `finish-${nextDestination}`} disabled={busy}>
+          <Save size={17} /> {isEditing ? "Update Case" : "Save & Finish"}
+        </button>
         {isEditing && mode === "progress" && onComplete && (
           <button className="complete-action" type="button" onClick={onComplete} disabled={busy}>
             <CheckCircle2 size={17} />
@@ -609,12 +635,12 @@ function CaseForm({
           </button>
         )}
         {!isEditing && (
-          <button className="ghost-action" type="button" onClick={() => setForm(blankCase)}>
+          <button className="ghost-action" type="button" disabled={busy} onClick={() => { if (!hasDraftContent(form) || window.confirm("Clear this unfinished entry?")) setForm(blankCase); }}>
             Clear
           </button>
         )}
         {isEditing && (
-          <button className="ghost-action" type="button" onClick={onCancelEdit}>
+          <button className="ghost-action" type="button" onClick={() => { if (window.confirm("Cancel editing this item? Unsubmitted changes will be discarded.")) onCancelEdit(); }}>
             <X size={16} />
             Cancel Edit
           </button>
@@ -625,8 +651,9 @@ function CaseForm({
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState("cases");
-  const [theme, setTheme] = useState(() => localStorage.getItem("cyberlab-theme") || "cyber-blue");
+  const [activeTab, setActiveTabRaw] = useState("cases");
+  const [pendingNavigation, setPendingNavigation] = useState(null);
+  const [theme, setTheme] = useState(() => localStorage.getItem("cyberlab-theme") || "signal-dark");
   const [animationsEnabled, setAnimationsEnabled] = useState(() => localStorage.getItem("cyberlab-animations") !== "off");
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [health, setHealth] = useState(null);
@@ -651,7 +678,7 @@ function App() {
   const [comboValues, setComboValues] = useState({});
   const [logoInfo, setLogoInfo] = useState({ exists: false, path: "" });
   const [markerIconInfo, setMarkerIconInfo] = useState({ exists: false, path: "" });
-  const [appInfo, setAppInfo] = useState({ name: "CyberLab Case Tracker", version: "3.0.10", update_available: false });
+  const [appInfo, setAppInfo] = useState({ name: "CyberLab Case Tracker", version: "3.0.11", update_available: false });
   const [appProfile, setAppProfile] = useState(defaultAppProfile);
   const [mapPreferences, setMapPreferences] = useState(defaultMapPreferences);
   const [browserPreferences, setBrowserPreferences] = useState(defaultBrowserPreferences);
@@ -663,13 +690,46 @@ function App() {
   const [dataQuality, setDataQuality] = useState({ issue_count: 0, issues: [] });
   const [caseFamilies, setCaseFamilies] = useState([]);
   const [caseTemplates, setCaseTemplates] = useState([]);
-  const [casesView, setCasesView] = useState("cases");
+  const [casesView, setCasesView] = useState("families");
+  const [workspace, setWorkspace] = useState(null);
   const [reportPreview, setReportPreview] = useState("");
   const [updateInfo, setUpdateInfo] = useState(null);
   const [workQueue, setWorkQueue] = useState([]);
   const [workQueueFilter, setWorkQueueFilter] = useState(() => localStorage.getItem("cyberlab-work-queue") || "all");
   const [savedDrafts, setSavedDrafts] = useState(() => ({ completed: loadDraft("completed"), progress: loadDraft("progress") }));
   const [showImportWizard, setShowImportWizard] = useState(() => localStorage.getItem("cyberlab-import-wizard-dismissed") !== "1");
+
+  const draftsInitialized = useRef({ completed: false, progress: false });
+  const entryBaseline = useRef({ completed: JSON.stringify(blankCase), progress: JSON.stringify(blankCase) });
+  const cleanEntry = (value) => { const { _errors, _nextEvidenceNotice, _destination, ...fields } = value; return JSON.stringify(fields); };
+  const hasUnsavedEntry = (entryMode) => {
+    const value = entryMode === "progress" ? progressForm : caseForm;
+    return hasDraftContent(value) && cleanEntry(value) !== entryBaseline.current[entryMode];
+  };
+  function setActiveTab(next) {
+    const entryMode = activeTab === "new" ? "completed" : activeTab === "progress" ? "progress" : null;
+    if (next !== activeTab && entryMode && hasUnsavedEntry(entryMode)) { setPendingNavigation(next); return; }
+    setActiveTabRaw(next);
+  }
+  useEffect(() => {
+    const warn = (event) => { if (hasUnsavedEntry("completed") || hasUnsavedEntry("progress")) { event.preventDefault(); event.returnValue = ""; } };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [caseForm, progressForm]);
+
+  async function openFamilyItem(member, edit = false) {
+    setBusy(true);
+    try {
+      const mode = member.source === "progress" ? "progress" : "completed";
+      const result = await api(`/api/${mode === "progress" ? "in-progress" : "cases"}?search=${encodeURIComponent(member.case_number)}&limit=100`);
+      const row = result.rows.find(item => item.id === member.id);
+      if (!row) throw new Error("Evidence item could not be found. Refresh the case list.");
+      setWorkspace(null);
+      if (edit) mode === "progress" ? editInProgressCase(row) : editCompletedCase(row);
+      else setSelectedCase({ ...row, _mode: mode, status: mode === "progress" ? "In-Progress" : "Completed" });
+    } catch (error) { setStatus(error.message); } finally { setBusy(false); }
+  }
+  const intakeFamily = caseFamilies.find(family => family.members.some(row => row.case_number === caseForm.case_number) || family.base_case_number === caseForm.case_number?.replace(/-\d+$/, ""));
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -703,8 +763,9 @@ function App() {
   }, [workQueueFilter]);
 
   useEffect(() => {
+    if (!draftsInitialized.current.completed) { draftsInitialized.current.completed = true; return; }
     const timer = window.setTimeout(() => {
-      if (!hasDraftContent(caseForm)) return;
+      if (!hasDraftContent(caseForm)) { localStorage.removeItem("cyberlab-draft-completed"); setSavedDrafts(current => ({ ...current, completed: null })); return; }
       const draft = { form: caseForm, savedAt: new Date().toISOString() };
       localStorage.setItem("cyberlab-draft-completed", JSON.stringify(draft));
       setSavedDrafts((current) => ({ ...current, completed: draft }));
@@ -713,8 +774,9 @@ function App() {
   }, [caseForm]);
 
   useEffect(() => {
+    if (!draftsInitialized.current.progress) { draftsInitialized.current.progress = true; return; }
     const timer = window.setTimeout(() => {
-      if (!hasDraftContent(progressForm)) return;
+      if (!hasDraftContent(progressForm)) { localStorage.removeItem("cyberlab-draft-progress"); setSavedDrafts(current => ({ ...current, progress: null })); return; }
       const draft = { form: progressForm, savedAt: new Date().toISOString() };
       localStorage.setItem("cyberlab-draft-progress", JSON.stringify(draft));
       setSavedDrafts((current) => ({ ...current, progress: draft }));
@@ -732,10 +794,10 @@ function App() {
       }
     };
     window.addEventListener("pagehide", sendShutdown);
-    window.addEventListener("beforeunload", sendShutdown);
+    window.addEventListener("pagehide", sendShutdown);
     return () => {
       window.removeEventListener("pagehide", sendShutdown);
-      window.removeEventListener("beforeunload", sendShutdown);
+      window.removeEventListener("pagehide", sendShutdown);
     };
   }, []);
 
@@ -753,7 +815,7 @@ function App() {
     try {
       const [healthData, appInfoData, profileData, uiCustomizationData, mapPreferenceData, browserPreferenceData, themePreferenceData, caseData, progressData, configData, schedulerData, analyticsData, markerData, comboData, logoData, markerIconData, backupData, dashboardData, qualityData, familyData, templateData, workQueueData] = await Promise.all([
         api("/api/health"),
-        api("/api/app-info").catch(() => ({ name: "CyberLab Case Tracker", version: "3.0.10", update_available: false })),
+        api("/api/app-info").catch(() => ({ name: "CyberLab Case Tracker", version: "3.0.11", update_available: false })),
         api("/api/settings/json/app_profile").catch(() => ({ value: defaultAppProfile })),
         api("/api/settings/json/ui_customization").catch(() => ({ value: defaultUiCustomization })),
         api("/api/settings/json/map_preferences").catch(() => ({ value: defaultMapPreferences })),
@@ -776,7 +838,7 @@ function App() {
         api("/api/work-queue").catch(() => ({ rows: [] })),
       ]);
       setHealth(healthData);
-      setAppInfo(appInfoData || { name: "CyberLab Case Tracker", version: "3.0.10", update_available: false });
+      setAppInfo(appInfoData || { name: "CyberLab Case Tracker", version: "3.0.11", update_available: false });
       setAppProfile({ ...defaultAppProfile, ...(profileData.value || {}) });
       setUiCustomization({ ...defaultUiCustomization, ...(uiCustomizationData.value || {}) });
       setMapPreferences({ ...defaultMapPreferences, ...(mapPreferenceData.value || {}) });
@@ -803,7 +865,7 @@ function App() {
       setCaseFamilies(familyData.families || []);
       setCaseTemplates(templateData.templates || []);
       setWorkQueue(workQueueData.rows || []);
-      setStatus("Data refreshed");
+      setStatus(current => current === "Ready" || current.startsWith("Backend unavailable:") ? "Data refreshed" : current);
     } catch (error) {
       setStatus(`Backend unavailable: ${error.message}`);
     } finally {
@@ -819,14 +881,20 @@ function App() {
   async function saveCase(event, mode) {
     event.preventDefault();
     const form = mode === "progress" ? progressForm : caseForm;
-    await persistCase(form, mode, mode);
+    const action = event.nativeEvent.submitter?.value || "";
+    const addNext = !form.id && action.startsWith("next-");
+    await persistCase(form, !form.id && (action.startsWith("next-") || action.startsWith("finish-")) ? action.split("-")[1] : !form.id ? new FormData(event.currentTarget).get("save_destination") || mode : mode, mode, addNext);
   }
 
-  async function saveNewCaseInProgress() {
-    await persistCase(caseForm, "progress", "completed");
-  }
-
-  async function persistCase(form, mode, draftMode) {
+  async function persistCase(form, mode, draftMode, addNext = false) {
+    const errors = validateCase(form);
+    const setEntry = draftMode === "progress" ? setProgressForm : setCaseForm;
+    if (Object.keys(errors).length) {
+      setEntry(current => ({ ...current, _errors: errors }));
+      setStatus("Check the highlighted fields before saving.");
+      requestAnimationFrame(() => document.querySelector(`[name="${Object.keys(errors)[0]}"]`)?.focus());
+      return;
+    }
     setBusy(true);
     const isEditing = Boolean(form.id);
     const path = form.id
@@ -837,18 +905,39 @@ function App() {
         ? "/api/in-progress"
         : "/api/cases";
     try {
+      if (!isEditing) {
+        const family = await api(`/api/case-family?case_number=${encodeURIComponent(form.case_number || "")}`);
+        if ((family.members || []).some((row) => row.case_number?.trim().toLowerCase() === form.case_number?.trim().toLowerCase())) {
+          setEntry(current => ({ ...current, _errors: { case_number: "This evidence number already exists. Choose another number." } }));
+          throw new Error("This evidence number already exists in Completed or In-Progress. Enter a different evidence number.");
+        }
+      }
       await api(path, {
         method: form.id ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payloadFromForm(form)),
       });
-      await saveComboValues(form);
       localStorage.removeItem(`cyberlab-draft-${draftMode}`);
       setSavedDrafts((current) => ({ ...current, [draftMode]: null }));
-      if (draftMode === "progress") setProgressForm(isEditing ? blankCase : retainedCaseDefaults(form));
-      else setCaseForm(isEditing ? blankCase : retainedCaseDefaults(form));
-      setStatus(mode === "progress" && !isEditing ? "Case placed in progress" : "Case saved");
+      const setEntryForm = draftMode === "progress" ? setProgressForm : setCaseForm;
+      let message = mode === "progress" && !isEditing ? "Case placed in progress" : "Case saved";
+      // Clear the saved number immediately so a follow-up failure cannot resubmit it.
+      const cleared = addNext ? nextEvidenceForm(form, "") : isEditing ? blankCase : retainedCaseDefaults(form);
+      entryBaseline.current[draftMode] = cleanEntry(cleared);
+      setEntryForm(cleared);
+      if (addNext) {
+        try {
+          const result = await api(`/api/case-family/next?case_number=${encodeURIComponent(form.case_number || "")}`);
+          message = `${form.case_number} saved to ${mode === "progress" ? "In-Progress" : "Completed"}. Entering ${result.case_number}.`;
+          setEntryForm({ ...nextEvidenceForm(form, result.case_number), _destination: mode, _nextEvidenceNotice: message });
+        } catch (error) {
+          message = `${form.case_number} saved. Could not suggest the next evidence number: ${error.message}. Enter it manually.`;
+          setEntryForm({ ...nextEvidenceForm(form, ""), _nextEvidenceNotice: message });
+        }
+      }
+      try { await saveComboValues(form); } catch { /* The case is already saved. */ }
       await refresh();
+      setStatus(message);
     } catch (error) {
       setStatus(`Save failed: ${error.message}`);
     } finally {
@@ -953,16 +1042,24 @@ function App() {
   }
 
   function editCompletedCase(row) {
+    const currentMode = activeTab === "new" ? "completed" : activeTab === "progress" ? "progress" : null;
+    if (currentMode && hasUnsavedEntry(currentMode) && !window.confirm("Replace this unfinished entry with the saved evidence item? Its autosaved draft will also be replaced.")) return;
     setSelectedCase(null);
-    setCaseForm(formFromRow(row, uiCustomization));
-    setActiveTab("new");
+    const entry = formFromRow(row, uiCustomization);
+    entryBaseline.current.completed = cleanEntry(entry);
+    setCaseForm(entry);
+    setActiveTabRaw("new");
     setStatus(`Editing ${row.case_number || `case ${row.id}`}`);
   }
 
   function editInProgressCase(row) {
+    const currentMode = activeTab === "new" ? "completed" : activeTab === "progress" ? "progress" : null;
+    if (currentMode && hasUnsavedEntry(currentMode) && !window.confirm("Replace this unfinished entry with the saved evidence item? Its autosaved draft will also be replaced.")) return;
     setSelectedCase(null);
-    setProgressForm(formFromRow(row, uiCustomization));
-    setActiveTab("progress");
+    const entry = formFromRow(row, uiCustomization);
+    entryBaseline.current.progress = cleanEntry(entry);
+    setProgressForm(entry);
+    setActiveTabRaw("progress");
     setStatus(`Editing ${row.case_number || `case ${row.id}`}`);
   }
 
@@ -1104,26 +1201,25 @@ function App() {
   }
 
   async function startNextSubcase(row, mode = "completed") {
+    const currentMode = activeTab === "new" ? "completed" : activeTab === "progress" ? "progress" : null;
+    if (currentMode && hasUnsavedEntry(currentMode) && !window.confirm("Replace this unfinished entry with the next evidence item? Its autosaved draft will also be replaced.")) return;
     try {
       const result = await api(`/api/case-family/next?case_number=${encodeURIComponent(row.case_number || "")}`);
-      const next = {
-        ...formFromRow(row, uiCustomization),
-        id: undefined,
-        case_number: result.case_number,
-        start_date: "",
-        end_date: "",
-        volume_size_gb: "",
-        device_type: "",
-        model: "",
-        os: "",
-        notes: "",
-      };
+      let source = row;
+      if (row.source && row.id) {
+        const records = await api(`/api/${row.source === "progress" ? "in-progress" : "cases"}?search=${encodeURIComponent(row.case_number)}&limit=100`);
+        source = records.rows.find(item => item.id === row.id);
+        if (!source) throw new Error("Evidence item was not found. Refresh and try again.");
+      }
+      const next = nextEvidenceForm(formFromRow(source, uiCustomization), result.case_number);
+      next._destination = mode;
+      next._nextEvidenceNotice = `Entering ${result.case_number}. Shared case information has been carried over.`;
       if (mode === "progress") {
-        setProgressForm(next);
-        setActiveTab("progress");
+        setCaseForm(next);
+        setActiveTabRaw("new");
       } else {
         setCaseForm(next);
-        setActiveTab("new");
+        setActiveTabRaw("new");
       }
       setSelectedCase(null);
       setStatus(`Ready for ${result.case_number}`);
@@ -1719,7 +1815,7 @@ function App() {
       .map((tab) => [`custom:${tab.key}`, tab.label || tab.key]);
     return [...builtIns, ...customTabs];
   }, [uiCustomization]);
-  const appVersionLabel = `v${appInfo.version || "3.0.10"}`;
+  const appVersionLabel = `v${appInfo.version || "3.0.11"}`;
 
   useEffect(() => {
     if (navItems.length && !navItems.some(([key]) => key === activeTab)) {
@@ -1819,7 +1915,7 @@ function App() {
         <div className="top-actions">
           <div className="status-pill">
             <Activity size={16} className={busy ? "spin" : ""} />
-            <span>{status}</span>
+            <span role="status" aria-live="polite">{status}</span>
           </div>
         </div>
       </header>
@@ -1915,7 +2011,7 @@ function App() {
               <OperationalOverview dashboard={dashboard} quality={dataQuality} />
               <div className="segmented-control cases-view-control" aria-label="Case view">
                 <button className={casesView === "cases" ? "active" : ""} onClick={() => setCasesView("cases")}><Database size={15} /> Cases</button>
-                <button className={casesView === "families" ? "active" : ""} onClick={() => setCasesView("families")}><Layers3 size={15} /> Families</button>
+                <button className={casesView === "families" ? "active" : ""} onClick={() => setCasesView("families")}><Layers3 size={15} /> Case workspaces</button>
                 <button className={casesView === "quality" ? "active" : ""} onClick={() => setCasesView("quality")}><FileCheck2 size={15} /> Review <span>{dataQuality.issue_count || 0}</span></button>
               </div>
               {casesView === "cases" && (
@@ -1929,7 +2025,7 @@ function App() {
                   uiCustomization={uiCustomization}
                 />
               )}
-              {casesView === "families" && <CaseFamilyList families={caseFamilies} onNext={(row) => startNextSubcase(row)} />}
+              {casesView === "families" && <CaseFamilyList families={caseFamilies.filter(family => !search || JSON.stringify(family).toLowerCase().includes(search.toLowerCase()))} onOpen={setWorkspace} onNext={(row) => startNextSubcase(row)} />}
               {casesView === "quality" && <DataQualityList quality={dataQuality} onDismiss={clearReviewItems} onRestore={restoreReviewItems} onOpen={openReviewIssue} onNormalize={normalizeReviewIssue} onMerge={mergeReviewDuplicates} />}
             </>
           )}
@@ -1943,7 +2039,9 @@ function App() {
                 form={caseForm}
                 setForm={setCaseForm}
                 onSubmit={(event) => saveCase(event, "completed")}
-                onSaveInProgress={saveNewCaseInProgress}
+                draft={savedDrafts.completed}
+                family={intakeFamily}
+                onEditItem={(row) => openFamilyItem(row, true)}
                 onCancelEdit={() => setCaseForm(blankCase)}
                 onGeocode={geocodeCaseForm}
                 mode="completed"
@@ -1969,6 +2067,7 @@ function App() {
                     form={progressForm}
                     setForm={setProgressForm}
                     onSubmit={(event) => saveCase(event, "progress")}
+                    draft={savedDrafts.progress}
                     onCancelEdit={cancelInProgressEdit}
                     onComplete={completeEditedCase}
                     onGeocode={geocodeCaseForm}
@@ -2552,6 +2651,8 @@ function App() {
           )}
         </section>
       </section>
+      {workspace && <CaseWorkspace family={workspace} onClose={() => setWorkspace(null)} onEdit={(row) => openFamilyItem(row, true)} onView={openFamilyItem} onNext={(row) => { setWorkspace(null); startNextSubcase(row, row.source || "completed"); }} busy={busy} />}
+      {pendingNavigation && <div className="modal-backdrop"><section className="case-modal leave-entry-dialog" role="dialog" aria-modal="true" aria-labelledby="leave-entry-title"><h2 id="leave-entry-title">Keep this unfinished entry?</h2><p>This entry has not been submitted. Its draft will be kept so you can return to it.</p><div className="form-actions"><button className="primary-action" autoFocus onClick={() => setPendingNavigation(null)}>Continue entering</button><button className="ghost-action" onClick={() => { setActiveTabRaw(pendingNavigation); setPendingNavigation(null); }}>Keep draft &amp; leave</button></div></section></div>}
       {selectedCase && (
         <CaseDetailModal
           row={selectedCase}
@@ -2617,19 +2718,19 @@ function DraftRecoveryBanner({ draft, onRestore, onDiscard }) {
   );
 }
 
-function CaseFamilyList({ families, onNext }) {
+function CaseFamilyList({ families, onNext, onOpen }) {
   return (
     <div className="family-list">
-      <div className="list-heading"><span>{families.length} case families</span><span>Grouped by base case number</span></div>
+      <div className="list-heading"><span>{families.length} cases</span><span>Grouped by base case number</span></div>
       {families.map((family) => (
         <article className="family-row" key={family.base_case_number}>
-          <div><strong>{family.base_case_number}</strong><span>{family.device_count} devices / {family.completed_count} completed / {family.active_count} active</span></div>
+          <div><button className="case-number-link" onClick={() => onOpen(family)}>{family.base_case_number}</button><span>{family.device_count} devices / {family.completed_count} completed / {family.active_count} active</span></div>
           <div className="family-volume">{formatVolume(family.total_volume_gb)}</div>
           <button className="icon-button" type="button" onClick={() => window.open(`${API_BASE}/api/case-family/report?case_number=${encodeURIComponent(family.base_case_number)}`, "_blank", "noopener")} title="Open case-family PDF"><FileText size={15} /></button>
           <button className="ghost-action compact" type="button" onClick={() => onNext(family.members?.[family.members.length - 1] || { case_number: family.base_case_number })}><Plus size={15} /> Next device</button>
         </article>
       ))}
-      {!families.length && <p className="empty-copy content-pad">No multi-device case families found yet.</p>}
+      {!families.length && <p className="empty-copy content-pad">No cases match this view.</p>}
     </div>
   );
 }
@@ -3019,7 +3120,8 @@ function BarList({ title, rows, metric = "Cases", valueType = "count" }) {
 }
 
 function CaseTable({ rows, total, onView, onEdit, onDuplicate, onDelete, uiCustomization = defaultUiCustomization }) {
-  const columns = [
+  const [preferences, setPreferences] = useListPreferences("cyberlab-list-completed");
+  const availableColumns = [
     ["case_number", "Case #", (row) => row.case_number],
     ["created_at", "Created", (row) => row.created_at],
     ["examiner", "Examiner", (row) => row.examiner],
@@ -3029,13 +3131,15 @@ function CaseTable({ rows, total, onView, onEdit, onDuplicate, onDelete, uiCusto
     ["city_of_offense", "City", (row) => row.city_of_offense],
     ["device_type", "Device", (row) => row.device_type],
   ].filter(([key]) => key === "created_at" || fieldVisible(uiCustomization, key, "completed"));
+  const columns = availableColumns.filter(([key]) => key === "case_number" || !preferences.hidden.includes(key));
   return (
     <>
       <div className="table-meta">
         <span>{total || 0} cases</span>
         <span>Edit or delete completed cases</span>
       </div>
-      <div className="case-table">
+      <ListControls columns={availableColumns} preferences={preferences} setPreferences={setPreferences} />
+      <div className={`case-table density-${preferences.density}`}>
         <table>
           <thead>
             <tr>
@@ -3046,7 +3150,7 @@ function CaseTable({ rows, total, onView, onEdit, onDuplicate, onDelete, uiCusto
           <tbody>
             {rows.map((row) => (
               <tr key={row.id}>
-                {columns.map(([key, , reader]) => <td key={key}>{formatValue(reader(row))}</td>)}
+                {columns.map(([key, , reader]) => <td key={key}>{key === "case_number" ? <button className="case-number-link" onClick={() => onView(row)}>{formatValue(reader(row))}</button> : ["workflow_status", "priority"].includes(key) ? <StatusBadge value={reader(row)} /> : formatValue(reader(row))}</td>)}
                 <td className="table-actions">
                   <button className="table-action" onClick={() => onView(row)} title="View"><Eye size={15} /></button>
                   <button className="table-action" onClick={() => onEdit(row)} title="Edit"><Pencil size={15} /></button>
@@ -3068,7 +3172,8 @@ function CaseTable({ rows, total, onView, onEdit, onDuplicate, onDelete, uiCusto
 }
 
 function InProgressTable({ rows, total, onView, onEdit, onDuplicate, onComplete, onDelete, uiCustomization = defaultUiCustomization }) {
-  const columns = [
+  const [preferences, setPreferences] = useListPreferences("cyberlab-list-progress");
+  const availableColumns = [
     ["case_number", "Case #", (row) => row.case_number],
     ["examiner", "Examiner", (row) => row.examiner],
     ["investigator", "Investigator", (row) => row.investigator],
@@ -3079,13 +3184,15 @@ function InProgressTable({ rows, total, onView, onEdit, onDuplicate, onComplete,
     ["priority", "Priority", (row) => row.priority],
     ["target_due_date", "Due", (row) => row.target_due_date],
   ].filter(([key]) => ["workflow_status", "priority", "target_due_date"].includes(key) || fieldVisible(uiCustomization, key, "progress"));
+  const columns = availableColumns.filter(([key]) => key === "case_number" || !preferences.hidden.includes(key));
   return (
     <>
       <div className="table-meta">
         <span>{rows.length === total ? `${total || 0} active cases` : `${rows.length} of ${total || 0} active cases`}</span>
         <span>Edit a case to update or complete it</span>
       </div>
-      <div className="case-table">
+      <ListControls columns={availableColumns} preferences={preferences} setPreferences={setPreferences} />
+      <div className={`case-table density-${preferences.density}`}>
         <table>
           <thead>
             <tr>
@@ -3096,7 +3203,7 @@ function InProgressTable({ rows, total, onView, onEdit, onDuplicate, onComplete,
           <tbody>
             {rows.map((row) => (
               <tr key={row.id}>
-                {columns.map(([key, , reader]) => <td key={key}>{formatValue(reader(row))}</td>)}
+                {columns.map(([key, , reader]) => <td key={key}>{key === "case_number" ? <button className="case-number-link" onClick={() => onView(row)}>{formatValue(reader(row))}</button> : ["workflow_status", "priority"].includes(key) ? <StatusBadge value={reader(row)} /> : formatValue(reader(row))}</td>)}
                 <td className="table-actions">
                   <button className="table-action" onClick={() => onView(row)} title="View"><Eye size={15} /></button>
                   <button className="table-action" onClick={() => onEdit(row)} title="Edit"><Pencil size={15} /></button>
