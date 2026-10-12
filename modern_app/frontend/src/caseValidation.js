@@ -12,4 +12,3 @@ export function validateCase(form) {
   if (form.start_date && form.end_date && form.end_date < form.start_date) errors.end_date = "End date must be on or after the start date.";
   return errors;
 }
-
