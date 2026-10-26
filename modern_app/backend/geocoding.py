@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from database import connect, ensure_schema
+from coordinates import coordinate_pair
 
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
@@ -72,10 +73,14 @@ def cached_coordinates(key: str) -> tuple[float, float] | None:
             "SELECT latitude, longitude FROM geocache WHERE location_key = ?",
             (key,),
         ).fetchone()
-    return (float(row["latitude"]), float(row["longitude"])) if row else None
+    return coordinate_pair(row["latitude"], row["longitude"]) if row else None
 
 
 def cache_coordinates(key: str, latitude: float, longitude: float) -> None:
+    pair = coordinate_pair(latitude, longitude)
+    if pair is None:
+        raise ValueError("Cannot cache an unresolved coordinate pair")
+    latitude, longitude = pair
     ensure_schema()
     with connect() as conn:
         conn.execute(
@@ -97,8 +102,9 @@ def geocode_payload(payload: dict[str, Any], timeout: float = 5.0) -> dict[str, 
     latitude = payload.get("latitude")
     longitude = payload.get("longitude")
     key = location_key(payload)
-    if latitude not in (None, "") and longitude not in (None, ""):
-        result = {"latitude": float(latitude), "longitude": float(longitude), "source": "manual", "location_key": key}
+    pair = coordinate_pair(latitude, longitude)
+    if pair is not None:
+        result = {"latitude": pair[0], "longitude": pair[1], "source": "manual", "location_key": key}
         if key:
             cache_coordinates(key, result["latitude"], result["longitude"])
         return result
@@ -123,6 +129,8 @@ def geocode_payload(payload: dict[str, Any], timeout: float = 5.0) -> dict[str, 
                 continue
             latitude = float(matches[0]["lat"])
             longitude = float(matches[0]["lon"])
+            if coordinate_pair(latitude, longitude) is None:
+                continue
             cache_coordinates(key, latitude, longitude)
             return {
                 "latitude": latitude,
@@ -152,24 +160,44 @@ def geocode_missing_case_locations(timeout: float = 5.0) -> dict[str, Any]:
     with connect() as conn:
         rows = conn.execute(
             """
-            SELECT location_name, city_of_offense, state_of_offense, latitude, longitude FROM case_log
+            SELECT id, 'case_log' AS source_table, location_name, city_of_offense, state_of_offense, latitude, longitude FROM case_log
             UNION ALL
-            SELECT location_name, city_of_offense, state_of_offense, latitude, longitude FROM in_progress_cases
+            SELECT id, 'in_progress_cases' AS source_table, location_name, city_of_offense, state_of_offense, latitude, longitude FROM in_progress_cases
             """
         ).fetchall()
 
     unique: dict[str, dict[str, Any]] = {}
+    grouped: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         payload = dict(row)
         key = location_key(payload)
         if key:
-            unique.setdefault(key, payload)
+            grouped.setdefault(key, []).append(payload)
+            if key not in unique or (coordinate_pair(unique[key].get("latitude"), unique[key].get("longitude")) is None and coordinate_pair(payload.get("latitude"), payload.get("longitude")) is not None):
+                unique[key] = payload
+
+    repaired_cases = 0
+
+    def repair_records(key, pair):
+        nonlocal repaired_cases
+        with connect() as conn:
+            for row in grouped[key]:
+                if coordinate_pair(row["latitude"], row["longitude"]) is not None:
+                    continue
+                # Match the snapshot values so a concurrent manual edit wins.
+                repaired_cases += conn.execute(
+                    f"UPDATE {row['source_table']} SET latitude = ?, longitude = ? WHERE id = ? AND latitude IS ? AND longitude IS ?",
+                    (*pair, row["id"], row["latitude"], row["longitude"]),
+                ).rowcount
+            conn.commit()
 
     pending: list[dict[str, Any]] = []
     already_mapped = 0
     for key, payload in unique.items():
-        has_coordinates = payload.get("latitude") is not None and payload.get("longitude") is not None
-        if has_coordinates or cached_coordinates(key):
+        pair = cached_coordinates(key) or coordinate_pair(payload.get("latitude"), payload.get("longitude"))
+        if pair is not None:
+            cache_coordinates(key, *pair)
+            repair_records(key, pair)
             already_mapped += 1
         else:
             pending.append(payload)
@@ -180,7 +208,9 @@ def geocode_missing_case_locations(timeout: float = 5.0) -> dict[str, Any]:
         if index:
             time.sleep(1.05)
         result = geocode_payload(payload, timeout=timeout)
-        if result:
+        pair = coordinate_pair(result.get("latitude"), result.get("longitude")) if result else None
+        if pair is not None:
+            repair_records(location_key(payload), pair)
             geocoded += 1
         else:
             unresolved.append(location_query(payload))
@@ -190,5 +220,6 @@ def geocode_missing_case_locations(timeout: float = 5.0) -> dict[str, Any]:
         "already_mapped": already_mapped,
         "missing_checked": len(pending),
         "geocoded": geocoded,
+        "repaired_cases": repaired_cases,
         "unresolved": unresolved,
     }

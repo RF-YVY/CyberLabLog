@@ -1,7 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { nextEvidenceForm } from "./evidenceEntry.js";
-import { validateCase } from "./caseValidation.js";
+import { validateCase, numberOrNull } from "./caseValidation.js";
+
+test("editing an unresolved location keeps null coordinates instead of creating Null Island", () => {
+  for (const value of [null, undefined, "", "   "]) assert.equal(numberOrNull(value), null);
+  assert.equal(numberOrNull(0), 0);
+  assert.equal(numberOrNull("0"), 0);
+  assert.equal(numberOrNull("34.25"), 34.25);
+});
 import { startBrowserSession } from "./browserSession.js";
 
 test("page navigation releases only its session, never sends a server shutdown", async () => {

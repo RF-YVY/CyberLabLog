@@ -12,3 +12,6 @@ export function validateCase(form) {
   if (form.start_date && form.end_date && form.end_date < form.start_date) errors.end_date = "End date must be on or after the start date.";
   return errors;
 }
+export function numberOrNull(value) {
+  return value == null || String(value).trim() === "" ? null : Number(value);
+}

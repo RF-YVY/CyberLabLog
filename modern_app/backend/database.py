@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from paths import active_db_path
+from coordinates import coordinate_pair
 
 
 CASE_COLUMNS = [
@@ -659,10 +660,9 @@ def get_map_markers() -> list[dict[str, Any]]:
             SELECT
                 COALESCE(NULLIF(TRIM(c.location_name), ''), TRIM(c.city_of_offense)) AS city,
                 c.state_of_offense AS state,
-                COUNT(*) AS case_count,
-                COALESCE(SUM(c.volume_size_gb), 0) AS total_volume_gb,
-                COALESCE(c.latitude, g.latitude) AS latitude,
-                COALESCE(c.longitude, g.longitude) AS longitude
+                c.volume_size_gb,
+                c.latitude, c.longitude,
+                g.latitude AS cached_latitude, g.longitude AS cached_longitude
             FROM c
             LEFT JOIN geocache g
                 ON g.location_key = CASE
@@ -670,26 +670,18 @@ def get_map_markers() -> list[dict[str, Any]]:
                     THEN TRIM(c.location_name) || '|' || TRIM(c.city_of_offense) || '|' || TRIM(c.state_of_offense)
                     ELSE TRIM(c.city_of_offense) || '|' || TRIM(c.state_of_offense)
                 END
-            WHERE COALESCE(TRIM(c.location_name), TRIM(c.city_of_offense), '') <> ''
-            GROUP BY
-                COALESCE(NULLIF(TRIM(c.location_name), ''), TRIM(c.city_of_offense)),
-                c.state_of_offense,
-                COALESCE(c.latitude, g.latitude),
-                COALESCE(c.longitude, g.longitude)
-            ORDER BY case_count DESC, city ASC
+            WHERE COALESCE(NULLIF(TRIM(c.location_name), ''), TRIM(c.city_of_offense), '') <> ''
             """
         ).fetchall()
-    return [
-        {
-            "city": row["city"],
-            "state": row["state"],
-            "case_count": int(row["case_count"]),
-            "total_volume_gb": float(row["total_volume_gb"] or 0),
-            "latitude": row["latitude"],
-            "longitude": row["longitude"],
-        }
-        for row in rows
-    ]
+    grouped = {}
+    for row in rows:
+        pair = coordinate_pair(row["latitude"], row["longitude"]) or coordinate_pair(row["cached_latitude"], row["cached_longitude"])
+        latitude, longitude = pair if pair is not None else (None, None)
+        key = (row["city"], row["state"], latitude, longitude)
+        marker = grouped.setdefault(key, {"city": row["city"], "state": row["state"], "case_count": 0, "total_volume_gb": 0.0, "latitude": latitude, "longitude": longitude})
+        marker["case_count"] += 1
+        marker["total_volume_gb"] += float(row["volume_size_gb"] or 0)
+    return sorted(grouped.values(), key=lambda marker: (-marker["case_count"], marker["city"]))
 
 
 def get_json_setting(key: str, default: Any) -> Any:

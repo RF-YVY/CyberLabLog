@@ -87,7 +87,7 @@ RUNTIME_STARTED_AT = time.monotonic()
 LAST_BROWSER_HEARTBEAT = 0.0
 SHUTDOWN_REQUESTED = False
 BROWSER_SESSIONS = BrowserSessions()
-APP_VERSION = "3.0.14"
+APP_VERSION = "3.0.15"
 GITHUB_REPO = "RF-YVY/CyberLabLog"
 UPDATE_CACHE_TTL_SECONDS = 900
 UPDATE_CACHE: dict[str, Any] = {"checked_at": 0.0, "value": None}
@@ -859,8 +859,9 @@ def geocode_case_location(payload: CasePayload) -> dict[str, Any]:
 
 @app.post("/api/map/geocode-missing")
 def geocode_missing_locations() -> dict[str, Any]:
+    backup = _backup_database_file("pre_geolocation_repair")
     result = geocode_missing_case_locations()
-    return {**result, "markers": get_map_markers()}
+    return {**result, "markers": get_map_markers(), "backup_path": str(backup)}
 
 
 @app.get("/api/dashboard")

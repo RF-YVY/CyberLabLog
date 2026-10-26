@@ -6,7 +6,9 @@ Download the EXE from Releases, place it in a folder on your PC, and create a de
 
 ![CyberLab Case Tracker modern browser UI](docs/images/cyberlab-modern-browser-ui.png)
 
-## Current Release: v3.0.14
+## Current Release: v3.0.15
+
+**Refresh Missing Locations** now retries named locations with `0,0`, repairs affected completed and in-progress records, and ignores invalid cached coordinate pairs. Valid cached coordinates can immediately restore markers; existing precise coordinates are preserved. A database backup is saved before refresh repairs. Editing cases with blank GPS fields no longer converts those fields to `0,0` or overwrites valid geocache entries.
 
 Case workspace View, Edit, and next-evidence actions now fetch the exact record instead of searching a capped result list. Page reloads and navigation no longer immediately stop the local server; the app waits 15 seconds after the last app page closes, canceling shutdown when a page reconnects. Evidence-opening failures appear inside the workspace.
 

@@ -5,6 +5,7 @@ import base64
 import html
 import json
 import textwrap
+from coordinates import coordinate_pair
 from collections import Counter
 from datetime import datetime, timedelta
 from functools import lru_cache
@@ -300,7 +301,7 @@ def _geocache_lookup() -> dict[str, tuple[float, float]]:
     return {
         str(row["location_key"]): (float(row["latitude"]), float(row["longitude"]))
         for row in rows
-        if row["latitude"] is not None and row["longitude"] is not None
+        if coordinate_pair(row["latitude"], row["longitude"]) is not None
     }
 
 
@@ -326,9 +327,8 @@ def _map_points(
         if not city:
             continue
         location_key = f"{location_name}|{city_name}|{state}" if location_name else f"{city_name}|{state}"
-        lat_lon = geocache.get(location_key)
-        latitude = row.get("latitude") if row.get("latitude") is not None else (lat_lon[0] if lat_lon else None)
-        longitude = row.get("longitude") if row.get("longitude") is not None else (lat_lon[1] if lat_lon else None)
+        lat_lon = coordinate_pair(row.get("latitude"), row.get("longitude")) or geocache.get(location_key)
+        latitude, longitude = lat_lon if lat_lon is not None else (None, None)
         key = (city, state, latitude, longitude)
         item = grouped.setdefault(
             key,

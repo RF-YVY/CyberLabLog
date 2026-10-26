@@ -75,6 +75,7 @@ try {
         "--hidden-import", "portable_backup",
         "--hidden-import", "update_installer",
         "--hidden-import", "browser_lifecycle",
+        "--hidden-import", "coordinates",
         "--hidden-import", "sqlite3",
         "--hidden-import", "openpyxl",
         "--hidden-import", "reportlab",

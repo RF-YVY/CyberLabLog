@@ -1,6 +1,8 @@
 # CyberLab Modernization
 
-Current release: **v3.0.14** (October 26, 2026).
+Current release: **v3.0.15** (October 26, 2026).
+
+Coordinate handling rejects zero/zero, partial, non-finite, and out-of-range pairs as unresolved, while accepting a valid pair containing a single zero. Refresh Missing Locations repairs invalid case pairs using a valid cache or sibling record before requesting a geocoder lookup; invalid caches are retried. Writes match snapshot coordinates to preserve concurrent manual edits. A database backup precedes the refresh operation. Form serialization preserves null/empty GPS fields.
 
 Case workspace actions use direct completed/in-progress record endpoints. Browser pages register per-page sessions; pagehide releases only that page, and the backend waits 15 seconds before exiting when no pages reconnect. Instance tokens prevent stale-page close signals from terminating a restarted app. Explicit updater shutdown remains immediate.
 

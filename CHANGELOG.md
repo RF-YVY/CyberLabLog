@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.15] - 2026-10-26
+- Fixed blank GPS fields being converted to zero when saving edited cases, which could poison city geocache entries.
+- Made Refresh Missing Locations retry zero/zero and invalid cache entries and persist repaired coordinates in completed and in-progress records.
+- Unified coordinate-pair fallback for live and exported maps, preserving precise valid coordinates and valid single-zero pairs.
+- Added a pre-repair database backup and a visible repaired-record count.
+
 ## [3.0.14] - 2026-10-26
 - Fixed case workspace View, Edit, and next-item lookup failures by fetching records directly by ID and source instead of searching at most 100 matches.
 - Replaced immediate pagehide shutdown with per-page browser sessions and a 15-second last-page close grace period, preserving the server across reloads and navigation.

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { startBrowserSession } from "./browserSession.js";
+import { numberOrNull } from "./caseValidation.js";
 import { nextEvidenceForm } from "./evidenceEntry";
 import { validateCase, StatusBadge, ListControls, useListPreferences, IntakeItems, CaseWorkspace } from "./caseExperience";
 import {
@@ -370,9 +371,9 @@ function payloadFromForm(form) {
   return {
     ...values,
     device_type: normalizeDeviceType(form.device_type),
-    volume_size_gb: form.volume_size_gb === "" ? null : Number(form.volume_size_gb),
-    latitude: form.latitude === "" ? null : Number(form.latitude),
-    longitude: form.longitude === "" ? null : Number(form.longitude),
+    volume_size_gb: numberOrNull(form.volume_size_gb),
+    latitude: numberOrNull(form.latitude),
+    longitude: numberOrNull(form.longitude),
   };
 }
 
@@ -439,6 +440,8 @@ function formFromRow(row, customization = defaultUiCustomization) {
     investigation_subject: investigationSubjectValue(row, customization),
     custom_fields: parseCustomFields(row.custom_fields),
     volume_size_gb: row.volume_size_gb ?? "",
+    latitude: row.latitude ?? "",
+    longitude: row.longitude ?? "",
     device_type: normalizeDeviceType(row.device_type),
     fpr_complete: row.fpr_complete === true || row.fpr_complete === 1,
     data_recovered: row.data_recovered || "",
@@ -674,7 +677,7 @@ function App() {
   const [comboValues, setComboValues] = useState({});
   const [logoInfo, setLogoInfo] = useState({ exists: false, path: "" });
   const [markerIconInfo, setMarkerIconInfo] = useState({ exists: false, path: "" });
-  const [appInfo, setAppInfo] = useState({ name: "CyberLab Case Tracker", version: "3.0.14", update_available: false });
+  const [appInfo, setAppInfo] = useState({ name: "CyberLab Case Tracker", version: "3.0.15", update_available: false });
   const [appProfile, setAppProfile] = useState(defaultAppProfile);
   const [mapPreferences, setMapPreferences] = useState(defaultMapPreferences);
   const [browserPreferences, setBrowserPreferences] = useState(defaultBrowserPreferences);
@@ -799,7 +802,7 @@ function App() {
     try {
       const [healthData, appInfoData, profileData, uiCustomizationData, mapPreferenceData, browserPreferenceData, themePreferenceData, caseData, progressData, configData, schedulerData, analyticsData, markerData, comboData, logoData, markerIconData, backupData, dashboardData, qualityData, familyData, templateData, workQueueData, backgroundData] = await Promise.all([
         api("/api/health"),
-        api("/api/app-info").catch(() => ({ name: "CyberLab Case Tracker", version: "3.0.14", update_available: false })),
+        api("/api/app-info").catch(() => ({ name: "CyberLab Case Tracker", version: "3.0.15", update_available: false })),
         api("/api/settings/json/app_profile").catch(() => ({ value: defaultAppProfile })),
         api("/api/settings/json/ui_customization").catch(() => ({ value: defaultUiCustomization })),
         api("/api/settings/json/map_preferences").catch(() => ({ value: defaultMapPreferences })),
@@ -823,7 +826,7 @@ function App() {
         api("/api/settings/background"),
       ]);
       setHealth(healthData);
-      setAppInfo(appInfoData || { name: "CyberLab Case Tracker", version: "3.0.14", update_available: false });
+      setAppInfo(appInfoData || { name: "CyberLab Case Tracker", version: "3.0.15", update_available: false });
       setAppProfile({ ...defaultAppProfile, ...(profileData.value || {}) });
       setUiCustomization({ ...defaultUiCustomization, ...(uiCustomizationData.value || {}) });
       setMapPreferences({ ...defaultMapPreferences, ...(mapPreferenceData.value || {}) });
@@ -1422,7 +1425,9 @@ function App() {
       const result = await api("/api/map/geocode-missing", { method: "POST" });
       setMapMarkers(result.markers || []);
       setMapGeocodeResult(result);
-      if (result.missing_checked === 0) {
+      if (result.repaired_cases) {
+        setStatus(`Repaired coordinates for ${result.repaired_cases} case records; ${result.geocoded} locations newly mapped`);
+      } else if (result.missing_checked === 0) {
         setStatus(`All ${result.locations_checked} unique case locations are already mapped`);
       } else {
         setStatus(`Mapped ${result.geocoded} of ${result.missing_checked} missing locations`);
@@ -1849,7 +1854,7 @@ function App() {
       .map((tab) => [`custom:${tab.key}`, tab.label || tab.key]);
     return [...builtIns, ...customTabs];
   }, [uiCustomization]);
-  const appVersionLabel = `v${appInfo.version || "3.0.14"}`;
+  const appVersionLabel = `v${appInfo.version || "3.0.15"}`;
 
   useEffect(() => {
     if (navItems.length && !navItems.some(([key]) => key === activeTab)) {
@@ -2397,6 +2402,7 @@ function App() {
                 <div className={`map-refresh-result ${mapGeocodeResult.unresolved?.length ? "warning" : "success"}`}>
                   <strong>{mapGeocodeResult.geocoded} newly mapped</strong>
                   <span>{mapGeocodeResult.already_mapped} already mapped</span>
+                  <span>{mapGeocodeResult.repaired_cases || 0} case records repaired</span>
                   <span>{mapGeocodeResult.unresolved?.length || 0} unresolved</span>
                   {mapGeocodeResult.unresolved?.length > 0 && <small>Needs a landmark or GPS coordinates: {mapGeocodeResult.unresolved.join("; ")}</small>}
                 </div>
