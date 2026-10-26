@@ -53,6 +53,7 @@ from legacy_import import import_app_data_zip, import_database_file
 from native_exports import run_native_exports, _map_html_content
 from portable_backup import create_encrypted_backup, restore_encrypted_backup
 from update_installer import launch_handoff
+from browser_lifecycle import BrowserSessions
 from paths import PROJECT_ROOT, active_db_path, backup_dir, data_dir, logo_path, marker_icon_path, background_image_path
 from cyberlab_workflow import (
     add_custody_event,
@@ -85,7 +86,8 @@ FRONTEND_ASSETS = FRONTEND_DIST / "assets"
 RUNTIME_STARTED_AT = time.monotonic()
 LAST_BROWSER_HEARTBEAT = 0.0
 SHUTDOWN_REQUESTED = False
-APP_VERSION = "3.0.13"
+BROWSER_SESSIONS = BrowserSessions()
+APP_VERSION = "3.0.14"
 GITHUB_REPO = "RF-YVY/CyberLabLog"
 UPDATE_CACHE_TTL_SECONDS = 900
 UPDATE_CACHE: dict[str, Any] = {"checked_at": 0.0, "value": None}
@@ -601,17 +603,34 @@ def start_background_services() -> None:
     _start_scheduler_once()
 
 
+class BrowserSessionRequest(BaseModel):
+    session_id: str
+    instance_id: str = ""
+
+
+def should_shutdown_for_browser() -> bool:
+    return BROWSER_SESSIONS.should_shutdown()
+
+
 @app.post("/api/runtime/heartbeat")
-def browser_heartbeat() -> dict[str, Any]:
+def browser_heartbeat(payload: BrowserSessionRequest | None = None) -> dict[str, Any]:
     global LAST_BROWSER_HEARTBEAT
     LAST_BROWSER_HEARTBEAT = time.monotonic()
+    if payload:
+        BROWSER_SESSIONS.heartbeat(payload.session_id)
+    return {"ok": True, "instance_id": BROWSER_SESSIONS.instance_id}
+
+
+@app.post("/api/runtime/session/close")
+def browser_session_close(payload: BrowserSessionRequest) -> dict[str, Any]:
+    BROWSER_SESSIONS.close(payload.session_id, payload.instance_id)
     return {"ok": True}
 
 
 @app.post("/api/runtime/shutdown")
 def browser_shutdown() -> dict[str, Any]:
-    global SHUTDOWN_REQUESTED
-    SHUTDOWN_REQUESTED = True
+    # Older pages send this during reload. Never terminate a newly active page.
+    BROWSER_SESSIONS.legacy_close()
     return {"ok": True}
 
 
@@ -698,6 +717,22 @@ def create_completed_case(payload: CasePayload) -> dict[str, Any]:
         return result
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/cases/{case_id}")
+def read_completed_case(case_id: int) -> dict[str, Any]:
+    row = get_case(case_id, in_progress=False)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Completed evidence item no longer exists. Refresh the case list.")
+    return row
+
+
+@app.get("/api/in-progress/{case_id}")
+def read_active_case(case_id: int) -> dict[str, Any]:
+    row = get_case(case_id, in_progress=True)
+    if row is None:
+        raise HTTPException(status_code=404, detail="In-progress evidence item no longer exists. Refresh the case list.")
+    return row
 
 
 @app.put("/api/cases/{case_id}")

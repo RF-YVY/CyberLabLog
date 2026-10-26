@@ -2,6 +2,23 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { nextEvidenceForm } from "./evidenceEntry.js";
 import { validateCase } from "./caseValidation.js";
+import { startBrowserSession } from "./browserSession.js";
+
+test("page navigation releases only its session, never sends a server shutdown", async () => {
+  const handlers = new Map(), requests = [], beacons = [];
+  const browser = { setInterval: () => 1, clearInterval() {}, addEventListener: (name, fn) => handlers.set(name, fn), removeEventListener: name => handlers.delete(name) };
+  const fetcher = async (url, options) => { requests.push([url, options]); return { ok: true, json: async () => ({ instance_id: "server-one" }) }; };
+  const stop = startBrowserSession({ apiBase: "http://test", browser, fetcher, sessionId: "page-one", navigatorObject: { sendBeacon: (url, body) => { beacons.push([url, body]); return true; } } });
+  await new Promise(resolve => setImmediate(resolve));
+  handlers.get("pagehide")();
+  assert.equal(beacons[0][0], "http://test/api/runtime/session/close");
+  assert.deepEqual(JSON.parse(await beacons[0][1].text()), { session_id: "page-one", instance_id: "server-one" });
+  await handlers.get("pageshow")();
+  assert.equal(requests.length, 2);
+  assert.ok(requests.every(([url]) => !url.endsWith("/shutdown")));
+  stop();
+  assert.equal(handlers.size, 0);
+});
 
 test("next evidence item preserves shared fields without carrying item results or edit identity", () => {
   const original = { id: 17, case_number: "CC-26-123456-1", examiner: "Examiner", investigator: "Investigator", agency: "Agency", investigation_subject: "Subject", start_date: "2026-10-12", end_date: "2026-10-12", notes: "Case notes", forensic_tool: "Tool", device_type: "iOS", model: "iPhone", os: "iOS", volume_size_gb: 128, data_recovered: "Yes", fpr_complete: true, custom_fields: { shared: "value" }, _errors: { case_number: "Old error" } };

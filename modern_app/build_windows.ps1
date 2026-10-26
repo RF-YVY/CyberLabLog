@@ -32,6 +32,14 @@ VSVersionInfo(
 )
 "@ | Set-Content -LiteralPath $VersionFile -Encoding utf8
 
+# Bundle runtime sources and map assets without test fixtures or Python caches.
+$BackendBundleRoot = Join-Path $BuildRoot ("runtime-backend-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Force $BackendBundleRoot | Out-Null
+Get-ChildItem -LiteralPath (Join-Path $AppRoot "backend") -File -Filter "*.py" |
+    Where-Object { $_.Name -notlike "test_*" } |
+    ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $BackendBundleRoot }
+Copy-Item -LiteralPath (Join-Path $AppRoot "backend/map_assets") -Destination (Join-Path $BackendBundleRoot "map_assets") -Recurse
+
 Push-Location $FrontendRoot
 try {
     npm run build
@@ -52,7 +60,7 @@ try {
         "--distpath", $DistRoot,
         "--workpath", $BuildRoot,
         "--paths", "backend",
-        "--add-data", "backend;backend",
+        "--add-data", "$BackendBundleRoot;backend",
         "--add-data", "frontend\dist;frontend\dist",
         "--hidden-import", "main",
         "--hidden-import", "database",
@@ -66,6 +74,7 @@ try {
         "--hidden-import", "custom_report",
         "--hidden-import", "portable_backup",
         "--hidden-import", "update_installer",
+        "--hidden-import", "browser_lifecycle",
         "--hidden-import", "sqlite3",
         "--hidden-import", "openpyxl",
         "--hidden-import", "reportlab",

@@ -6,7 +6,9 @@ Download the EXE from Releases, place it in a folder on your PC, and create a de
 
 ![CyberLab Case Tracker modern browser UI](docs/images/cyberlab-modern-browser-ui.png)
 
-## Current Release: v3.0.13
+## Current Release: v3.0.14
+
+Case workspace View, Edit, and next-evidence actions now fetch the exact record instead of searching a capped result list. Page reloads and navigation no longer immediately stop the local server; the app waits 15 seconds after the last app page closes, canceling shutdown when a page reconnects. Evidence-opening failures appear inside the workspace.
 
 Map HTML exports now include a built-in geographic overview and their own Leaflet assets, so local files remain viewable without internet or blocked tile requests. For street detail, use **Open Map Report** in the Reports output list while CyberLab is running. The viewer can open earlier exported maps too, and falls back to the geographic overview if street tiles fail. Regenerate older HTML files to add standalone support. The in-app Map remains available as before.
 

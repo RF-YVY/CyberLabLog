@@ -168,8 +168,9 @@ def open_browser(url: str, port: int, preferred_browser: str) -> subprocess.Pope
 def monitor_shutdown_request(server: uvicorn.Server, runtime_module: object) -> None:
     while not server.should_exit:
         shutdown_requested = bool(getattr(runtime_module, "SHUTDOWN_REQUESTED", False))
-        if shutdown_requested:
-            print("Browser window closed. Shutting down backend server.")
+        browser_closed = getattr(runtime_module, "should_shutdown_for_browser", lambda: False)()
+        if shutdown_requested or browser_closed:
+            print("Application shutdown requested. Shutting down backend server.")
             server.should_exit = True
             break
         time.sleep(1.0)

@@ -238,6 +238,16 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(target.read_bytes().startswith(b"%PDF"))
         self.assertGreater(target.stat().st_size, 1000)
 
+    def test_workspace_fetches_exact_completed_and_active_records(self) -> None:
+        completed = self.create_case("CC-26-80001")
+        active = self.create_case("CC-26-80001-2", progress=True)
+        self.assertEqual(backend_main.read_completed_case(completed["id"])["case_number"], "CC-26-80001")
+        self.assertEqual(backend_main.read_active_case(active["id"])["case_number"], "CC-26-80001-2")
+        from fastapi import HTTPException
+        with self.assertRaises(HTTPException) as error:
+            backend_main.read_completed_case(999999)
+        self.assertEqual(error.exception.status_code, 404)
+
     def test_encrypted_portable_backup_round_trip(self) -> None:
         self.create_case("CC-26-5000-1")
         root = Path(self.temp_dir.name)

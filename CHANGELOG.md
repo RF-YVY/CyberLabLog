@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.14] - 2026-10-26
+- Fixed case workspace View, Edit, and next-item lookup failures by fetching records directly by ID and source instead of searching at most 100 matches.
+- Replaced immediate pagehide shutdown with per-page browser sessions and a 15-second last-page close grace period, preserving the server across reloads and navigation.
+- Protected active/restarted apps from stale close signals and made evidence-opening errors visible inside the workspace.
+
 ## [3.0.13] - 2026-10-26
 - Fixed Access Blocked tiles in exported HTML maps by embedding a standalone geographic basemap and Leaflet assets instead of requesting OSM tiles from local files.
 - Added Open Map Report in Reports for online street detail through the local app, including support for older exported snapshots and fallback on tile failure.

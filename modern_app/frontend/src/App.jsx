@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { startBrowserSession } from "./browserSession.js";
 import { nextEvidenceForm } from "./evidenceEntry";
 import { validateCase, StatusBadge, ListControls, useListPreferences, IntakeItems, CaseWorkspace } from "./caseExperience";
 import {
@@ -673,7 +674,7 @@ function App() {
   const [comboValues, setComboValues] = useState({});
   const [logoInfo, setLogoInfo] = useState({ exists: false, path: "" });
   const [markerIconInfo, setMarkerIconInfo] = useState({ exists: false, path: "" });
-  const [appInfo, setAppInfo] = useState({ name: "CyberLab Case Tracker", version: "3.0.13", update_available: false });
+  const [appInfo, setAppInfo] = useState({ name: "CyberLab Case Tracker", version: "3.0.14", update_available: false });
   const [appProfile, setAppProfile] = useState(defaultAppProfile);
   const [mapPreferences, setMapPreferences] = useState(defaultMapPreferences);
   const [browserPreferences, setBrowserPreferences] = useState(defaultBrowserPreferences);
@@ -687,6 +688,8 @@ function App() {
   const [caseTemplates, setCaseTemplates] = useState([]);
   const [casesView, setCasesView] = useState("families");
   const [workspace, setWorkspace] = useState(null);
+  const [workspaceError, setWorkspaceError] = useState("");
+  useEffect(() => { setWorkspaceError(""); }, [workspace]);
   const [reportPreview, setReportPreview] = useState("");
   const [updateInfo, setUpdateInfo] = useState(null);
   const [updateProgress, setUpdateProgress] = useState({ phase: "idle", downloaded_bytes: 0, total_bytes: 0, message: "" });
@@ -716,15 +719,14 @@ function App() {
 
   async function openFamilyItem(member, edit = false) {
     setBusy(true);
+    setWorkspaceError("");
     try {
       const mode = member.source === "progress" ? "progress" : "completed";
-      const result = await api(`/api/${mode === "progress" ? "in-progress" : "cases"}?search=${encodeURIComponent(member.case_number)}&limit=100`);
-      const row = result.rows.find(item => item.id === member.id);
-      if (!row) throw new Error("Evidence item could not be found. Refresh the case list.");
+      const row = await api(`/api/${mode === "progress" ? "in-progress" : "cases"}/${encodeURIComponent(member.id)}`);
       setWorkspace(null);
       if (edit) mode === "progress" ? editInProgressCase(row) : editCompletedCase(row);
       else setSelectedCase({ ...row, _mode: mode, status: mode === "progress" ? "In-Progress" : "Completed" });
-    } catch (error) { setStatus(error.message); } finally { setBusy(false); }
+    } catch (error) { setWorkspaceError(`Could not open evidence item: ${error.message}`); setStatus(error.message); } finally { setBusy(false); }
   }
   const intakeFamily = caseFamilies.find(family => family.members.some(row => row.case_number === caseForm.case_number) || family.base_case_number === caseForm.case_number?.replace(/-\d+$/, ""));
 
@@ -781,22 +783,7 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [progressForm]);
 
-  useEffect(() => {
-    const shutdownUrl = `${API_BASE}/api/runtime/shutdown`;
-    const sendShutdown = () => {
-      try {
-        navigator.sendBeacon?.(shutdownUrl, new Blob(["{}"], { type: "application/json" }));
-      } catch {
-        fetch(shutdownUrl, { method: "POST", keepalive: true }).catch(() => {});
-      }
-    };
-    window.addEventListener("pagehide", sendShutdown);
-    window.addEventListener("pagehide", sendShutdown);
-    return () => {
-      window.removeEventListener("pagehide", sendShutdown);
-      window.removeEventListener("pagehide", sendShutdown);
-    };
-  }, []);
+  useEffect(() => startBrowserSession({ apiBase: API_BASE }), []);
 
   async function api(path, options) {
     const response = await fetch(`${API_BASE}${path}`, options);
@@ -812,7 +799,7 @@ function App() {
     try {
       const [healthData, appInfoData, profileData, uiCustomizationData, mapPreferenceData, browserPreferenceData, themePreferenceData, caseData, progressData, configData, schedulerData, analyticsData, markerData, comboData, logoData, markerIconData, backupData, dashboardData, qualityData, familyData, templateData, workQueueData, backgroundData] = await Promise.all([
         api("/api/health"),
-        api("/api/app-info").catch(() => ({ name: "CyberLab Case Tracker", version: "3.0.13", update_available: false })),
+        api("/api/app-info").catch(() => ({ name: "CyberLab Case Tracker", version: "3.0.14", update_available: false })),
         api("/api/settings/json/app_profile").catch(() => ({ value: defaultAppProfile })),
         api("/api/settings/json/ui_customization").catch(() => ({ value: defaultUiCustomization })),
         api("/api/settings/json/map_preferences").catch(() => ({ value: defaultMapPreferences })),
@@ -836,7 +823,7 @@ function App() {
         api("/api/settings/background"),
       ]);
       setHealth(healthData);
-      setAppInfo(appInfoData || { name: "CyberLab Case Tracker", version: "3.0.13", update_available: false });
+      setAppInfo(appInfoData || { name: "CyberLab Case Tracker", version: "3.0.14", update_available: false });
       setAppProfile({ ...defaultAppProfile, ...(profileData.value || {}) });
       setUiCustomization({ ...defaultUiCustomization, ...(uiCustomizationData.value || {}) });
       setMapPreferences({ ...defaultMapPreferences, ...(mapPreferenceData.value || {}) });
@@ -1206,9 +1193,7 @@ function App() {
       const result = await api(`/api/case-family/next?case_number=${encodeURIComponent(row.case_number || "")}`);
       let source = row;
       if (row.source && row.id) {
-        const records = await api(`/api/${row.source === "progress" ? "in-progress" : "cases"}?search=${encodeURIComponent(row.case_number)}&limit=100`);
-        source = records.rows.find(item => item.id === row.id);
-        if (!source) throw new Error("Evidence item was not found. Refresh and try again.");
+        source = await api(`/api/${row.source === "progress" ? "in-progress" : "cases"}/${encodeURIComponent(row.id)}`);
       }
       const next = nextEvidenceForm(formFromRow(source, uiCustomization), result.case_number);
       next._destination = mode;
@@ -1864,7 +1849,7 @@ function App() {
       .map((tab) => [`custom:${tab.key}`, tab.label || tab.key]);
     return [...builtIns, ...customTabs];
   }, [uiCustomization]);
-  const appVersionLabel = `v${appInfo.version || "3.0.13"}`;
+  const appVersionLabel = `v${appInfo.version || "3.0.14"}`;
 
   useEffect(() => {
     if (navItems.length && !navItems.some(([key]) => key === activeTab)) {
@@ -2729,7 +2714,7 @@ function App() {
           )}
         </section>
       </section>
-      {workspace && <CaseWorkspace family={workspace} onClose={() => setWorkspace(null)} onEdit={(row) => openFamilyItem(row, true)} onView={openFamilyItem} onNext={(row) => { setWorkspace(null); startNextSubcase(row, row.source || "completed"); }} busy={busy} />}
+      {workspace && <CaseWorkspace family={workspace} error={workspaceError} onClose={() => setWorkspace(null)} onEdit={(row) => openFamilyItem(row, true)} onView={(row) => openFamilyItem(row, false)} onNext={(row) => { setWorkspace(null); startNextSubcase(row, row.source || "completed"); }} busy={busy} />}
       {pendingNavigation && <div className="modal-backdrop"><section className="case-modal leave-entry-dialog" role="dialog" aria-modal="true" aria-labelledby="leave-entry-title"><h2 id="leave-entry-title">Keep this unfinished entry?</h2><p>This entry has not been submitted. Its draft will be kept so you can return to it.</p><div className="form-actions"><button className="primary-action" autoFocus onClick={() => setPendingNavigation(null)}>Continue entering</button><button className="ghost-action" onClick={() => { setActiveTabRaw(pendingNavigation); setPendingNavigation(null); }}>Keep draft &amp; leave</button></div></section></div>}
       {selectedCase && (
         <CaseDetailModal

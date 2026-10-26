@@ -50,6 +50,7 @@
 .intake-item > span:not(.case-status) { color: var(--muted); font-size: 13px; }
 .case-workspace { width: min(900px, 94vw); padding: 24px; overflow-wrap: anywhere; }
 .case-workspace h2, .case-workspace h3 { margin-top: 0; }
+.workspace-error { padding: 12px; border: 1px solid var(--danger); color: var(--text); border-radius: 8px; overflow-wrap: anywhere; }
 .workspace-shared { margin: 24px 0; }
 .workspace-shared dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; }
 .workspace-shared dt { color: var(--muted); font-size: 13px; }

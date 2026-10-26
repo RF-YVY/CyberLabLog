@@ -1,6 +1,8 @@
 # CyberLab Modernization
 
-Current release: **v3.0.13** (October 26, 2026).
+Current release: **v3.0.14** (October 26, 2026).
+
+Case workspace actions use direct completed/in-progress record endpoints. Browser pages register per-page sessions; pagehide releases only that page, and the backend waits 15 seconds before exiting when no pages reconnect. Instance tokens prevent stale-page close signals from terminating a restarted app. Explicit updater shutdown remains immediate.
 
 Map exports embed Leaflet and public-domain Natural Earth country/U.S. state boundaries for standalone viewing. They request no street tiles from `file://`, which lacks the HTTP referrer required by OSM's tile policy. **Open Map Report** in the Reports output list serves a newly rendered snapshot over HTTP for street detail, with a geographic fallback on tile failure. Older report snapshots are supported; arbitrary scripts in report files are not executed by this viewer.
 
