@@ -1,6 +1,8 @@
 # CyberLab Modernization
 
-Current release: **v3.0.12** (October 26, 2026).
+Current release: **v3.0.13** (October 26, 2026).
+
+Map exports embed Leaflet and public-domain Natural Earth country/U.S. state boundaries for standalone viewing. They request no street tiles from `file://`, which lacks the HTTP referrer required by OSM's tile policy. **Open Map Report** in the Reports output list serves a newly rendered snapshot over HTTP for street detail, with a geographic fallback on tile failure. Older report snapshots are supported; arbitrary scripts in report files are not executed by this viewer.
 
 Packaged Windows builds support **Settings → Portable Application Update → Check → Download & Install**. The update is verified with GitHub's SHA-256 digest and exact asset size before a database backup and independent Windows helper replace the EXE and restart it. The helper clears inherited PyInstaller extraction variables, retries locked-file replacement, keeps `.exe.previous` for recovery, and logs to `app_data/update-install.log`. Failed downloads leave the running app intact and can be retried. A source checkout supports download-only updates.
 

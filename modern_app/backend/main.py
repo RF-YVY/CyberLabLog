@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -50,7 +50,7 @@ from custom_report import custom_report_data, generate_custom_csv, generate_cust
 from family_report import generate_case_family_pdf
 from geocoding import ensure_location_cached, geocode_missing_case_locations, geocode_payload
 from legacy_import import import_app_data_zip, import_database_file
-from native_exports import run_native_exports
+from native_exports import run_native_exports, _map_html_content
 from portable_backup import create_encrypted_backup, restore_encrypted_backup
 from update_installer import launch_handoff
 from paths import PROJECT_ROOT, active_db_path, backup_dir, data_dir, logo_path, marker_icon_path, background_image_path
@@ -85,7 +85,7 @@ FRONTEND_ASSETS = FRONTEND_DIST / "assets"
 RUNTIME_STARTED_AT = time.monotonic()
 LAST_BROWSER_HEARTBEAT = 0.0
 SHUTDOWN_REQUESTED = False
-APP_VERSION = "3.0.12"
+APP_VERSION = "3.0.13"
 GITHUB_REPO = "RF-YVY/CyberLabLog"
 UPDATE_CACHE_TTL_SECONDS = 900
 UPDATE_CACHE: dict[str, Any] = {"checked_at": 0.0, "value": None}
@@ -1444,6 +1444,28 @@ def run_native_export(payload: JsonSettingRequest) -> dict[str, Any]:
         return result
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/reports/map", response_class=HTMLResponse)
+def view_exported_map(path: str) -> HTMLResponse:
+    """Re-render snapshot data, rather than executing arbitrary report-file HTML."""
+    try:
+        report = Path(path).resolve(strict=True)
+        if report.name != "areas_served_map.html" or report.stat().st_size > 20 * 1024 * 1024:
+            raise ValueError("Choose an exported areas_served_map.html report")
+        content = report.read_text(encoding="utf-8")
+        marker = "const exportData = "
+        start = content.index(marker) + len(marker)
+        data, _ = json.JSONDecoder().raw_decode(content, start)
+        if not isinstance(data, dict) or not isinstance(data.get("points"), list):
+            raise ValueError("The report snapshot is invalid")
+        rendered = _map_html_content(data["points"], {
+            "include_case_details": data.get("includeCaseDetails", True),
+            "marker_icon_data": data.get("markerIcon", ""),
+        })
+        return HTMLResponse(rendered, headers={"Referrer-Policy": "strict-origin-when-cross-origin"})
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        raise HTTPException(status_code=400, detail=f"Could not open the map report: {exc}") from exc
 
 
 @app.post("/api/files/list-output")

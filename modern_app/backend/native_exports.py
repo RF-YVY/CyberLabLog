@@ -7,6 +7,7 @@ import json
 import textwrap
 from collections import Counter
 from datetime import datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -522,13 +523,31 @@ def _write_graph_pdf(output_dir: Path, graph_type: str, safe_name: str, graph_ro
 
 
 def _write_map_html(path: Path, points: list[dict[str, Any]], map_settings: dict[str, Any] | None = None) -> dict[str, Any]:
+    path.write_text(_map_html_content(points, map_settings), encoding="utf-8")
+    return _file_info(path)
+
+
+@lru_cache(maxsize=1)
+def _map_assets() -> dict[str, str]:
+    root = Path(__file__).resolve().parent / "map_assets"
+    return {name: (root / name).read_text(encoding="utf-8").replace("</", "<\\/") for name in (
+        "leaflet.js", "leaflet.css", "LEAFLET-LICENSE.txt",
+        "ne_110m_admin_0_countries.geojson", "ne_110m_admin_1_states_provinces.geojson",
+    )}
+
+
+def _map_html_content(points: list[dict[str, Any]], map_settings: dict[str, Any] | None = None) -> str:
     settings = map_settings or {}
+    assets = _map_assets()
     geocoded = [point for point in points if point.get("latitude") is not None and point.get("longitude") is not None]
     missing = [point for point in points if point.get("latitude") is None or point.get("longitude") is None]
     center = [geocoded[0]["latitude"], geocoded[0]["longitude"]] if geocoded else [32.7, -89.5]
     marker_data_url = ""
     if marker_icon_path().exists():
         marker_data_url = f"data:image/png;base64,{base64.b64encode(marker_icon_path().read_bytes()).decode('ascii')}"
+    saved_marker = settings.get("marker_icon_data")
+    if isinstance(saved_marker, str) and saved_marker.startswith("data:image/png;base64,") and len(saved_marker) < 1024 * 1024:
+        marker_data_url = saved_marker
     data_json = json.dumps({
         "points": points,
         "center": center,
@@ -539,22 +558,22 @@ def _write_map_html(path: Path, points: list[dict[str, Any]], map_settings: dict
         "<tr>"
         f"<td>{html.escape(str(point['city']))}</td>"
         f"<td>{html.escape(str(point['state']))}</td>"
-        f"<td>{point['case_count']}</td>"
-        f"<td>{point['completed_count']}</td>"
-        f"<td>{point['in_progress_count']}</td>"
+        f"<td>{html.escape(str(point['case_count']))}</td>"
+        f"<td>{html.escape(str(point['completed_count']))}</td>"
+        f"<td>{html.escape(str(point['in_progress_count']))}</td>"
         f"<td>{html.escape(_format_volume(point['total_volume_gb']))}</td>"
         f"<td>{'Mapped' if point.get('latitude') is not None else 'No geocode'}</td>"
         "</tr>"
         for point in points
     )
-    path.write_text(
-        f"""<!doctype html>
+    return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CyberLab Case Map</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <style>{assets['leaflet.css']}</style>
   <style>
     :root {{ font-family: Inter, Segoe UI, Arial, sans-serif; color: #e6f2ff; background: #06101c; }}
     body {{ margin: 0; background: linear-gradient(180deg, #0a1726, #06101c); }}
@@ -563,7 +582,9 @@ def _write_map_html(path: Path, points: list[dict[str, Any]], map_settings: dict
     .muted {{ color: #9ab5cd; }}
     .metrics {{ display: flex; gap: 10px; flex-wrap: wrap; }}
     .metric {{ padding: 8px 12px; border: 1px solid #2e5e86; border-radius: 999px; background: #081a2c; }}
-    #map {{ height: min(72vh, 760px); min-height: 520px; }}
+    #map {{ height: min(72vh, 760px); min-height: 520px; background: #e2eff5; }}
+    .map-status {{ padding: 10px 18px; background: #0a2035; color: #c3d9e8; }}
+    .region-label {{ background: transparent; box-shadow: none; border: none; color: #425b69; font-size: 11px; text-shadow: 0 1px white; }}
     main {{ padding: 18px; }}
     table {{ border-collapse: collapse; width: 100%; margin-top: 18px; overflow: hidden; border-radius: 14px; }}
     th, td {{ border-bottom: 1px solid #254b69; padding: 9px 11px; text-align: left; }}
@@ -588,6 +609,7 @@ def _write_map_html(path: Path, points: list[dict[str, Any]], map_settings: dict
       <div class="metric">{len(geocoded)} mapped</div>
     </div>
   </header>
+  <div class="map-status" id="map-status" role="status">Geographic overview: country and U.S. state boundaries, with case locations. Street detail is available when opened from CyberLab's report viewer.</div>
   <div id="map"></div>
   <main>
     <div class="muted">Locations without geocache coordinates are listed in the table and can be mapped after the app geocache is updated.</div>
@@ -596,14 +618,51 @@ def _write_map_html(path: Path, points: list[dict[str, Any]], map_settings: dict
       <tbody>{rows}</tbody>
     </table>
   </main>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>/* {assets['LEAFLET-LICENSE.txt']} */
+{assets['leaflet.js']}</script>
   <script>
     const exportData = {data_json};
-    const map = L.map('map', {{ scrollWheelZoom: true }}).setView(exportData.center, exportData.points.length ? 7 : 5);
-    L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
-      maxZoom: 18,
-      attribution: '&copy; OpenStreetMap contributors'
-    }}).addTo(map);
+    const escapeText = (value) => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+    const webReport = ['http:', 'https:'].includes(location.protocol);
+    const map = L.map('map', {{ scrollWheelZoom: true }}).setView(exportData.center, exportData.points.length ? (webReport ? 7 : 6) : 5);
+    const countries = L.geoJSON({assets['ne_110m_admin_0_countries.geojson']}, {{
+      style: {{ color: '#879da8', weight: 1, fillColor: '#f7f7ed', fillOpacity: 1 }},
+      onEachFeature: (feature, layer) => layer.bindTooltip(escapeText(feature.properties.name))
+    }});
+    const states = L.geoJSON({assets['ne_110m_admin_1_states_provinces.geojson']}, {{
+      style: {{ color: '#8b9dac', weight: 1, fillOpacity: 0 }},
+      onEachFeature: (feature, layer) => layer.bindTooltip(escapeText(feature.properties.name), {{ permanent: true, direction: 'center', className: 'region-label' }})
+    }});
+    const overview = L.layerGroup([countries, states]).addTo(map);
+    map.attributionControl.addAttribution('<a href="https://www.naturalearthdata.com/">Natural Earth</a> overview boundaries');
+    L.control.scale().addTo(map);
+    // Local files cannot send the HTTP referrer required by OSM's tile policy.
+    // Never request OSM tiles from file:// or other non-web origins.
+    if (['http:', 'https:'].includes(location.protocol)) {{
+      const streets = L.tileLayer('https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      }});
+      streets.on('tileerror', () => {{
+        if (!map.hasLayer(streets)) return;
+        map.removeLayer(streets);
+        overview.addTo(map);
+        map.setZoom(Math.min(map.getZoom(), 6));
+        document.getElementById('map-status').textContent = 'Street tiles are unavailable. Showing the built-in geographic overview; case locations and details remain available.';
+      }});
+      map.removeLayer(overview);
+      streets.addTo(map);
+      document.getElementById('map-status').textContent = 'Street map requires internet access. Geographic overview is also available in the layer selector.';
+      L.control.layers({{ 'Street map (online)': streets, 'Geographic overview': overview }}).addTo(map);
+      map.on('baselayerchange', (event) => {{
+        if (event.layer === overview) {{
+          map.setZoom(Math.min(map.getZoom(), 6));
+          document.getElementById('map-status').textContent = 'Geographic overview: country and U.S. state boundaries. Select Street map for online street detail.';
+        }} else {{
+          document.getElementById('map-status').textContent = 'Street map requires internet access. Geographic overview is also available in the layer selector.';
+        }}
+      }});
+    }}
     const bounds = [];
     const markerSizeForZoom = (zoom) => {{
       const level = Number(zoom || 6);
@@ -634,7 +693,7 @@ def _write_map_html(path: Path, points: list[dict[str, Any]], map_settings: dict
       }}
       return L.divIcon({{
         className: '',
-        html: `<span class="marker-pin" style="width:${{size}}px;height:${{size}}px;font-size:${{Math.max(9, size * 0.32)}}px;">${{point.case_count}}</span>`,
+        html: `<span class="marker-pin" style="width:${{size}}px;height:${{size}}px;font-size:${{Math.max(9, size * 0.32)}}px;">${{escapeText(point.case_count)}}</span>`,
         iconSize: [size, size],
         iconAnchor: [size / 2, size / 2],
         popupAnchor: [0, -size / 2],
@@ -647,19 +706,20 @@ def _write_map_html(path: Path, points: list[dict[str, Any]], map_settings: dict
         bounds.push(latLng);
         const icon = buildIcon(point);
         const cases = exportData.includeCaseDetails && point.cases?.length
-          ? `<ul class="case-list">${{point.cases.map((item) => `<li>${{item.case_number || 'No case #'}} - ${{item.status}}</li>`).join('')}}</ul>`
+          ? `<ul class="case-list">${{point.cases.map((item) => `<li>${{escapeText(item.case_number || 'No case #')}} - ${{escapeText(item.status)}}</li>`).join('')}}</ul>`
           : '';
         const marker = L.marker(latLng, {{ icon }}).addTo(map).bindPopup(`
-          <div class="popup-title">${{point.city}}, ${{point.state}}</div>
-          <div>${{point.case_count}} cases / ${{formatVolume(point.total_volume_gb)}}</div>
-          <div>${{point.completed_count}} completed / ${{point.in_progress_count}} in progress</div>
+          <div class="popup-title">${{escapeText(point.city)}}, ${{escapeText(point.state)}}</div>
+          <div>${{escapeText(point.case_count)}} cases / ${{formatVolume(point.total_volume_gb)}}</div>
+          <div>${{escapeText(point.completed_count)}} completed / ${{escapeText(point.in_progress_count)}} in progress</div>
           ${{cases}}
         `);
+        marker.bindTooltip(`${{escapeText(point.city)}}, ${{escapeText(point.state)}}: ${{escapeText(point.case_count)}} cases`);
         activeMarkers.push([marker, point]);
       }});
     map.on('zoomend', () => activeMarkers.forEach(([marker, point]) => marker.setIcon(buildIcon(point))));
     if (bounds.length > 1) {{
-      map.fitBounds(bounds, {{ padding: [38, 38] }});
+      map.fitBounds(bounds, {{ padding: [38, 38], maxZoom: webReport ? 18 : 6 }});
     }}
     if ({len(missing)} > 0) {{
       const missingControl = L.control({{ position: 'bottomleft' }});
@@ -673,10 +733,7 @@ def _write_map_html(path: Path, points: list[dict[str, Any]], map_settings: dict
   </script>
 </body>
 </html>
-""",
-        encoding="utf-8",
-    )
-    return _file_info(path)
+"""
 
 
 def _write_summary_pdf(path: Path, completed_rows: list[dict[str, Any]], progress_rows: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, Any] | None:

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.13] - 2026-10-26
+- Fixed Access Blocked tiles in exported HTML maps by embedding a standalone geographic basemap and Leaflet assets instead of requesting OSM tiles from local files.
+- Added Open Map Report in Reports for online street detail through the local app, including support for older exported snapshots and fallback on tile failure.
+- Added map export/viewer regressions and retained the working in-app map.
+
 ## [3.0.12] - 2026-10-26
 - Added Download & Install in the Windows GUI with progress, duplicate-install protection, mandatory SHA-256 and size verification, database backup, independent replacement helper, rollback, and automatic restart.
 - Added a local custom background image with a persistent show/hide switch that retains the saved image when hidden.

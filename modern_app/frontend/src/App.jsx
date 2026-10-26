@@ -673,7 +673,7 @@ function App() {
   const [comboValues, setComboValues] = useState({});
   const [logoInfo, setLogoInfo] = useState({ exists: false, path: "" });
   const [markerIconInfo, setMarkerIconInfo] = useState({ exists: false, path: "" });
-  const [appInfo, setAppInfo] = useState({ name: "CyberLab Case Tracker", version: "3.0.12", update_available: false });
+  const [appInfo, setAppInfo] = useState({ name: "CyberLab Case Tracker", version: "3.0.13", update_available: false });
   const [appProfile, setAppProfile] = useState(defaultAppProfile);
   const [mapPreferences, setMapPreferences] = useState(defaultMapPreferences);
   const [browserPreferences, setBrowserPreferences] = useState(defaultBrowserPreferences);
@@ -812,7 +812,7 @@ function App() {
     try {
       const [healthData, appInfoData, profileData, uiCustomizationData, mapPreferenceData, browserPreferenceData, themePreferenceData, caseData, progressData, configData, schedulerData, analyticsData, markerData, comboData, logoData, markerIconData, backupData, dashboardData, qualityData, familyData, templateData, workQueueData, backgroundData] = await Promise.all([
         api("/api/health"),
-        api("/api/app-info").catch(() => ({ name: "CyberLab Case Tracker", version: "3.0.12", update_available: false })),
+        api("/api/app-info").catch(() => ({ name: "CyberLab Case Tracker", version: "3.0.13", update_available: false })),
         api("/api/settings/json/app_profile").catch(() => ({ value: defaultAppProfile })),
         api("/api/settings/json/ui_customization").catch(() => ({ value: defaultUiCustomization })),
         api("/api/settings/json/map_preferences").catch(() => ({ value: defaultMapPreferences })),
@@ -836,7 +836,7 @@ function App() {
         api("/api/settings/background"),
       ]);
       setHealth(healthData);
-      setAppInfo(appInfoData || { name: "CyberLab Case Tracker", version: "3.0.12", update_available: false });
+      setAppInfo(appInfoData || { name: "CyberLab Case Tracker", version: "3.0.13", update_available: false });
       setAppProfile({ ...defaultAppProfile, ...(profileData.value || {}) });
       setUiCustomization({ ...defaultUiCustomization, ...(uiCustomizationData.value || {}) });
       setMapPreferences({ ...defaultMapPreferences, ...(mapPreferenceData.value || {}) });
@@ -1864,7 +1864,7 @@ function App() {
       .map((tab) => [`custom:${tab.key}`, tab.label || tab.key]);
     return [...builtIns, ...customTabs];
   }, [uiCustomization]);
-  const appVersionLabel = `v${appInfo.version || "3.0.12"}`;
+  const appVersionLabel = `v${appInfo.version || "3.0.13"}`;
 
   useEffect(() => {
     if (navItems.length && !navItems.some(([key]) => key === activeTab)) {
@@ -2352,6 +2352,7 @@ function App() {
                         <strong>{file.name}</strong>
                       </div>
                       <span>{formatBytes(file.size)} / {formatTimestamp(file.modified)}</span>
+                      {file.name.split(/[\\/]/).pop() === "areas_served_map.html" && <a className="ghost-action" href={`${API_BASE}/api/reports/map?path=${encodeURIComponent(file.path)}`} target="_blank" rel="noopener">Open Map Report</a>}
                     </article>
                   ))}
                 </div>

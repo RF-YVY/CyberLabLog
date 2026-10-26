@@ -6,7 +6,9 @@ Download the EXE from Releases, place it in a folder on your PC, and create a de
 
 ![CyberLab Case Tracker modern browser UI](docs/images/cyberlab-modern-browser-ui.png)
 
-## Current Release: v3.0.12
+## Current Release: v3.0.13
+
+Map HTML exports now include a built-in geographic overview and their own Leaflet assets, so local files remain viewable without internet or blocked tile requests. For street detail, use **Open Map Report** in the Reports output list while CyberLab is running. The viewer can open earlier exported maps too, and falls back to the geographic overview if street tiles fail. Regenerate older HTML files to add standalone support. The in-app Map remains available as before.
 
 From **Settings → Portable Application Update**, choose **Check**, then **Download & Install**. The Windows EXE verifies GitHub's SHA-256 digest, backs up the database, closes, replaces itself, and reopens. It keeps the prior executable as `.exe.previous` and records the result in `app_data/update-install.log`. Cases, settings, and uploaded images remain in place. **Download EXE only** remains available for manual deployment. Versions through v3.0.11 support downloading only; install v3.0.12 once to gain the in-app installation action.
 
