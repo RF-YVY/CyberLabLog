@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.12] - 2026-10-26
+- Added Download & Install in the Windows GUI with progress, duplicate-install protection, mandatory SHA-256 and size verification, database backup, independent replacement helper, rollback, and automatic restart.
+- Added a local custom background image with a persistent show/hide switch that retains the saved image when hidden.
+- Grouped theme choices by design category and added Frosted Lab, Bento Pop, Bento Mint, Aurora Lab, Citrus Circuit, and Coral Console.
+- Added image validation and background persistence regression tests; Aurora motion respects animation and reduced-motion settings.
+- Added readable paginated vector PDF graph exports with shared scales and PNG overviews for crowded charts.
+
 ## [3.0.11] - 2026-10-12
 - Made case workspaces the default Cases view, grouping completed and in-progress evidence with shared case information and View, Edit, and next-item actions.
 - Separated shared case information from evidence details during intake and simplified submissions to a destination selector, Save & Finish, and Save & Add Next Evidence Item.

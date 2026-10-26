@@ -6,7 +6,15 @@ Download the EXE from Releases, place it in a folder on your PC, and create a de
 
 ![CyberLab Case Tracker modern browser UI](docs/images/cyberlab-modern-browser-ui.png)
 
-## Current Release: v3.0.11
+## Current Release: v3.0.12
+
+From **Settings → Portable Application Update**, choose **Check**, then **Download & Install**. The Windows EXE verifies GitHub's SHA-256 digest, backs up the database, closes, replaces itself, and reopens. It keeps the prior executable as `.exe.previous` and records the result in `app_data/update-install.log`. Cases, settings, and uploaded images remain in place. **Download EXE only** remains available for manual deployment. Versions through v3.0.11 support downloading only; install v3.0.12 once to gain the in-app installation action.
+
+In **Settings → Appearance**, themes are grouped into Everyday Lab, Ambient Operations Hub, High-Contrast Command Center, Modular Dashboard, Kinetic Laboratory, Geometric Console, and Classic Consoles. New choices include Frosted Lab, Bento Pop, Bento Mint, Aurora Lab, Citrus Circuit, and Coral Console. Aurora motion respects the Interface Animations switch and reduced-motion preferences.
+
+Use **Custom Background** to load a PNG, JPG, or WebP image (up to 20 MB). **Show Custom Background** hides or shows the saved image without deleting it, and its setting persists across launches. Replacing an image turns it on. The image is stored locally in `app_data/custom_background.png`, included in portable backups, and fills the window with centered cropping. Themes retain their panel and table colors for readability; glass themes expose more of the image.
+
+Graph exports include a landscape vector PDF with every category across readable pages (up to 20 entries per page, fewer for wrapped labels). Pages share the same axis scale. The PNG is a labeled top-20 overview when the full chart would be crowded; CSV exports retain all values. Enable **Graph PNG overview + full PDF** in report settings to generate both visual formats.
 
 - Opens the Cases page to **Case workspaces**, grouping Completed and In-Progress evidence under one base case number.
 - Separates shared case information from device details during intake.

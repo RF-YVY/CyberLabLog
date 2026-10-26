@@ -4,6 +4,7 @@ import csv
 import base64
 import html
 import json
+import textwrap
 from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -58,7 +59,7 @@ def run_native_exports(config: dict[str, Any]) -> dict[str, Any]:
     if graph_settings.get("include_csv", True) or graph_settings.get("include_png", True):
         graph_dir = _report_dir(output_dir, config, "graphs_snapshot")
         graph_dir.mkdir(parents=True, exist_ok=True)
-        _remove_generated_files(graph_dir, ("cyberlab_graph_*.png", "cyberlab_graph_*.csv"))
+        _remove_generated_files(graph_dir, ("cyberlab_graph_*.png", "cyberlab_graph_*.csv", "cyberlab_graph_*.pdf"))
         for graph_type in graph_settings.get("types") or ["Offense Type", "Device Type", "Agency"]:
             graph_rows = _graph_rows(graph_type, completed_rows)
             if not graph_rows:
@@ -70,6 +71,7 @@ def run_native_exports(config: dict[str, Any]) -> dict[str, Any]:
                 graph_png = _write_graph_png(graph_dir, graph_type, safe_name, graph_rows)
                 if graph_png:
                     files.append(graph_png)
+                files.append(_write_graph_pdf(graph_dir, graph_type, safe_name, graph_rows))
 
     map_settings = config.get("map_settings") if isinstance(config.get("map_settings"), dict) else {}
     if map_settings.get("include_data_file", False) or "map_html" in report_types:
@@ -416,28 +418,53 @@ def _write_graph_csv(output_dir: Path, safe_name: str, graph_rows: list[dict[str
     return _file_info(path)
 
 
-def _write_graph_png(output_dir: Path, graph_type: str, safe_name: str, graph_rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+GRAPH_ROWS_PER_PAGE = 20
+
+
+def _graph_chunks(graph_rows: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    chunks, chunk, used = [], [], 0.0
+    for row in graph_rows:
+        lines = max(1.6, len(textwrap.wrap(str(row["label"]), width=32)))
+        if chunk and (len(chunk) >= GRAPH_ROWS_PER_PAGE or used + lines > 32):
+            chunks.append(chunk)
+            chunk, used = [], 0.0
+        chunk.append(row)
+        used += lines
+    if chunk:
+        chunks.append(chunk)
+    return chunks
+
+
+def _graph_figure(graph_type: str, graph_rows: list[dict[str, Any]], *, title: str, maximum: float):
     try:
         import matplotlib
 
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError as exc:
-        raise RuntimeError(f"PDF export is unavailable because ReportLab could not be loaded: {exc}") from exc
+        raise RuntimeError(f"Graph export is unavailable because Matplotlib could not be loaded: {exc}") from exc
 
     rows = list(reversed(graph_rows))
-    labels = [str(row["label"]) for row in rows]
+    labels = [textwrap.fill(str(row["label"]), width=32) for row in rows]
     values = [float(row["value"] or 0) for row in rows]
-    height = max(4.8, 0.34 * len(rows) + 1.8)
-    width = 11 if len(rows) > 16 else 10
-    fig, ax = plt.subplots(figsize=(width, height), dpi=140)
+    fig, ax = plt.subplots(figsize=(11, 8.5), dpi=160)
+    fig.subplots_adjust(left=0.34, right=0.91, bottom=0.10, top=0.88)
     fig.patch.set_facecolor("#f6fbff")
     ax.set_facecolor("#ffffff")
-    bars = ax.barh(labels, values, color="#2f82d8", edgecolor="#1d5f9f", linewidth=0.6)
-    ax.set_title(graph_type, fontsize=15, fontweight="bold", color="#172033", pad=12)
+    # Numeric positions preserve separate bars even when wrapped names match.
+    positions, used = [], 0.0
+    for label in labels:
+        height = max(1.6, len(label.splitlines()))
+        positions.append(used + height / 2)
+        used += height
+    bars = ax.barh(positions, values, color="#2f82d8", edgecolor="#1d5f9f", linewidth=0.6)
+    ax.set_yticks(positions, labels)
+    ax.set_ylim(0, max(used, 8))
+    fig.suptitle(title, fontsize=15, fontweight="bold", color="#172033", y=0.96)
+    ax.set_xlim(0, max(maximum, 1) * 1.22)
     ax.set_xlabel("Total Volume" if graph_type in VOLUME_GRAPH_TYPES else "Cases", color="#44576c")
     ax.tick_params(axis="x", colors="#44576c")
-    ax.tick_params(axis="y", labelsize=9, colors="#172033")
+    ax.tick_params(axis="y", labelsize=10, colors="#172033")
     ax.grid(axis="x", color="#d8e5f0", linewidth=0.8)
     ax.set_axisbelow(True)
     for spine in ax.spines.values():
@@ -449,13 +476,48 @@ def _write_graph_png(output_dir: Path, graph_type: str, safe_name: str, graph_ro
             f" {_format_volume(value) if graph_type in VOLUME_GRAPH_TYPES else f'{value:g}'}",
             va="center",
             ha="left",
-            fontsize=8,
+            fontsize=10,
             color="#172033",
         )
-    fig.tight_layout()
+    return fig
+
+
+def _write_graph_png(output_dir: Path, graph_type: str, safe_name: str, graph_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    import matplotlib.pyplot as plt
+
+    overview = _graph_chunks(graph_rows)[0] if graph_rows else []
+    title = graph_type
+    if len(graph_rows) > len(overview):
+        title += f" - Top {len(overview)} of {len(graph_rows)} (all categories in PDF/CSV)"
+    fig = _graph_figure(graph_type, overview, title=title,
+                        maximum=max((float(row["value"] or 0) for row in graph_rows), default=0))
     path = output_dir / f"cyberlab_graph_{safe_name}.png"
-    fig.savefig(path, bbox_inches="tight")
-    plt.close(fig)
+    try:
+        fig.savefig(path)
+    finally:
+        plt.close(fig)
+    return _file_info(path)
+
+
+def _write_graph_pdf(output_dir: Path, graph_type: str, safe_name: str, graph_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    from matplotlib.backends.backend_pdf import PdfPages
+    import matplotlib.pyplot as plt
+
+    path = output_dir / f"cyberlab_graph_{safe_name}.pdf"
+    maximum = max((float(row["value"] or 0) for row in graph_rows), default=0)
+    chunks = _graph_chunks(graph_rows) or [[]]
+    page_count = len(chunks)
+    with PdfPages(path) as pdf:
+        start = 0
+        for page, chunk in enumerate(chunks):
+            fig = _graph_figure(graph_type, chunk, title=graph_type, maximum=maximum)
+            fig.text(0.5, 0.915, f"Categories {start + 1}-{start + len(chunk)} of {len(graph_rows)} | Page {page + 1} of {page_count} | Same scale on every page",
+                     ha="center", fontsize=10, color="#44576c")
+            try:
+                pdf.savefig(fig)
+            finally:
+                plt.close(fig)
+            start += len(chunk)
     return _file_info(path)
 
 

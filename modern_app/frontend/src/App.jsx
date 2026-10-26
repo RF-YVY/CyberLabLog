@@ -126,22 +126,14 @@ const caseFieldDefinitions = [
   ["target_due_date", "Target Due Date"],
 ];
 
-const themes = [
-  ["cyber-blue", "Cyber Blue"],
-  ["signal-dark", "Lab Dark"],
-  ["day-shift", "Lab Light"],
-  ["nebula-console", "Nebula Console"],
-  ["tripwire-neon", "Tripwire Neon"],
-  ["light-blue", "Light Blue"],
-  ["cyan-hud", "Cyan HUD"],
-  ["ember-focus", "Ember Focus"],
-  ["soft-relief", "Soft Relief"],
-  ["soft-relief-dark", "Soft Relief Dark"],
-  ["spectrum-glass", "Spectrum Glass"],
-  ["electric-azure", "Electric Azure"],
-  ["aqua-command", "Aqua Command"],
-  ["violet-flow", "Violet Flow"],
-  ["carbon-intelligence", "Carbon Intelligence"],
+const themeGroups = [
+  { label: "Everyday Lab", themes: [["signal-dark", "Lab Dark"], ["day-shift", "Lab Light"], ["soft-relief", "Soft Relief"], ["soft-relief-dark", "Soft Relief Dark"]] },
+  { label: "Ambient Operations Hub · Glass & Future", themes: [["frosted-lab", "Frosted Lab"], ["spectrum-glass", "Spectrum Glass"], ["nebula-console", "Nebula Console"], ["light-blue", "Light Blue"]] },
+  { label: "High-Contrast Command Center · Cyber & Future", themes: [["tripwire-neon", "Tripwire Neon"], ["cyan-hud", "Cyan HUD"], ["electric-azure", "Electric Azure"], ["carbon-intelligence", "Carbon Intelligence"]] },
+  { label: "Modular Dashboard · Fun & Colorful", themes: [["bento-pop", "Bento Pop"], ["bento-mint", "Bento Mint"]] },
+  { label: "Kinetic Laboratory · Fun & Future", themes: [["aurora-lab", "Aurora Lab"], ["violet-flow", "Violet Flow"], ["ember-focus", "Ember Focus"]] },
+  { label: "Geometric Console · Cyber & Fun", themes: [["geometric-citrus", "Citrus Circuit"], ["geometric-coral", "Coral Console"]] },
+  { label: "Classic Consoles", themes: [["cyber-blue", "Cyber Blue"], ["aqua-command", "Aqua Command"]] },
 ];
 
 const defaultThemePreferences = {
@@ -656,6 +648,9 @@ function App() {
   const [theme, setTheme] = useState(() => localStorage.getItem("cyberlab-theme") || "signal-dark");
   const [animationsEnabled, setAnimationsEnabled] = useState(() => localStorage.getItem("cyberlab-animations") !== "off");
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [backgroundInfo, setBackgroundInfo] = useState({ exists: false, enabled: false, version: 0 });
+  const [backgroundBusy, setBackgroundBusy] = useState(false);
+  const [backgroundError, setBackgroundError] = useState("");
   const [health, setHealth] = useState(null);
   const [cases, setCases] = useState({ rows: [], total: 0 });
   const [inProgress, setInProgress] = useState({ rows: [], total: 0 });
@@ -678,7 +673,7 @@ function App() {
   const [comboValues, setComboValues] = useState({});
   const [logoInfo, setLogoInfo] = useState({ exists: false, path: "" });
   const [markerIconInfo, setMarkerIconInfo] = useState({ exists: false, path: "" });
-  const [appInfo, setAppInfo] = useState({ name: "CyberLab Case Tracker", version: "3.0.11", update_available: false });
+  const [appInfo, setAppInfo] = useState({ name: "CyberLab Case Tracker", version: "3.0.12", update_available: false });
   const [appProfile, setAppProfile] = useState(defaultAppProfile);
   const [mapPreferences, setMapPreferences] = useState(defaultMapPreferences);
   const [browserPreferences, setBrowserPreferences] = useState(defaultBrowserPreferences);
@@ -694,6 +689,8 @@ function App() {
   const [workspace, setWorkspace] = useState(null);
   const [reportPreview, setReportPreview] = useState("");
   const [updateInfo, setUpdateInfo] = useState(null);
+  const [updateProgress, setUpdateProgress] = useState({ phase: "idle", downloaded_bytes: 0, total_bytes: 0, message: "" });
+  const updateRunning = ["checking", "downloading", "preparing", "installing"].includes(updateProgress.phase);
   const [workQueue, setWorkQueue] = useState([]);
   const [workQueueFilter, setWorkQueueFilter] = useState(() => localStorage.getItem("cyberlab-work-queue") || "all");
   const [savedDrafts, setSavedDrafts] = useState(() => ({ completed: loadDraft("completed"), progress: loadDraft("progress") }));
@@ -813,9 +810,9 @@ function App() {
   async function refresh() {
     setBusy(true);
     try {
-      const [healthData, appInfoData, profileData, uiCustomizationData, mapPreferenceData, browserPreferenceData, themePreferenceData, caseData, progressData, configData, schedulerData, analyticsData, markerData, comboData, logoData, markerIconData, backupData, dashboardData, qualityData, familyData, templateData, workQueueData] = await Promise.all([
+      const [healthData, appInfoData, profileData, uiCustomizationData, mapPreferenceData, browserPreferenceData, themePreferenceData, caseData, progressData, configData, schedulerData, analyticsData, markerData, comboData, logoData, markerIconData, backupData, dashboardData, qualityData, familyData, templateData, workQueueData, backgroundData] = await Promise.all([
         api("/api/health"),
-        api("/api/app-info").catch(() => ({ name: "CyberLab Case Tracker", version: "3.0.11", update_available: false })),
+        api("/api/app-info").catch(() => ({ name: "CyberLab Case Tracker", version: "3.0.12", update_available: false })),
         api("/api/settings/json/app_profile").catch(() => ({ value: defaultAppProfile })),
         api("/api/settings/json/ui_customization").catch(() => ({ value: defaultUiCustomization })),
         api("/api/settings/json/map_preferences").catch(() => ({ value: defaultMapPreferences })),
@@ -836,9 +833,10 @@ function App() {
         api("/api/case-families").catch(() => ({ families: [] })),
         api("/api/templates").catch(() => ({ templates: [] })),
         api("/api/work-queue").catch(() => ({ rows: [] })),
+        api("/api/settings/background"),
       ]);
       setHealth(healthData);
-      setAppInfo(appInfoData || { name: "CyberLab Case Tracker", version: "3.0.11", update_available: false });
+      setAppInfo(appInfoData || { name: "CyberLab Case Tracker", version: "3.0.12", update_available: false });
       setAppProfile({ ...defaultAppProfile, ...(profileData.value || {}) });
       setUiCustomization({ ...defaultUiCustomization, ...(uiCustomizationData.value || {}) });
       setMapPreferences({ ...defaultMapPreferences, ...(mapPreferenceData.value || {}) });
@@ -859,6 +857,7 @@ function App() {
       setComboValues(comboData || {});
       setLogoInfo(logoData || { exists: false, path: "" });
       setMarkerIconInfo(markerIconData || { exists: false, path: "" });
+      setBackgroundInfo(backgroundData);
       setBackups(backupData || { backup_dir: "", files: [] });
       setDashboard(dashboardData || { monthly_completed: [], examiner_workload: [] });
       setDataQuality(qualityData || { issue_count: 0, issues: [] });
@@ -1239,6 +1238,34 @@ function App() {
     } finally {
       setBusy(false);
     }
+  }
+
+  useEffect(() => {
+    api("/api/update/status").then(setUpdateProgress).catch(() => null);
+  }, []);
+
+  useEffect(() => {
+    if (!["checking", "downloading", "preparing"].includes(updateProgress.phase)) return;
+    const poll = setInterval(async () => {
+      try { setUpdateProgress(await api("/api/update/status")); }
+      catch { /* Keep the last handoff message while the app restarts. */ }
+    }, 750);
+    return () => clearInterval(poll);
+  }, [updateProgress.phase]);
+
+  async function installPortableUpdate() {
+    if (hasUnsavedEntry("completed") || hasUnsavedEntry("progress")) {
+      setStatus("Save or finish the open case entry before installing an update.");
+      return;
+    }
+    if (!window.confirm("Download and install the latest update? Save your work first. CyberLab will back up the database, close, replace the EXE, and reopen. Your cases, settings, and images will be kept.")) return;
+    setBusy(true);
+    try {
+      await api("/api/update/install", { method: "POST" });
+      setUpdateProgress({ phase: "checking", downloaded_bytes: 0, total_bytes: 0, message: "Checking latest release…" });
+    } catch (error) {
+      setUpdateProgress({ phase: "failed", message: error.message });
+    } finally { setBusy(false); }
   }
 
   async function downloadPortableUpdate() {
@@ -1727,6 +1754,28 @@ function App() {
     }
   }
 
+  async function changeBackground(fileOrEnabled) {
+    if (backgroundBusy) return;
+    setBackgroundBusy(true);
+    setBackgroundError("");
+    try {
+      const uploading = typeof fileOrEnabled !== "boolean";
+      const body = uploading ? new FormData() : JSON.stringify({ enabled: fileOrEnabled });
+      if (uploading) body.append("file", fileOrEnabled);
+      const result = await api("/api/settings/background", {
+        method: uploading ? "POST" : "PUT",
+        ...(uploading ? {} : { headers: { "Content-Type": "application/json" } }),
+        body,
+      });
+      setBackgroundInfo(result);
+      setStatus(uploading ? "Custom background saved" : result.enabled ? "Custom background shown" : "Custom background hidden; image kept");
+    } catch (error) {
+      setBackgroundError(error.message);
+    } finally {
+      setBackgroundBusy(false);
+    }
+  }
+
   async function runAutomatedExports() {
     setBusy(true);
     setStatus("Running automated exports...");
@@ -1815,7 +1864,7 @@ function App() {
       .map((tab) => [`custom:${tab.key}`, tab.label || tab.key]);
     return [...builtIns, ...customTabs];
   }, [uiCustomization]);
-  const appVersionLabel = `v${appInfo.version || "3.0.11"}`;
+  const appVersionLabel = `v${appInfo.version || "3.0.12"}`;
 
   useEffect(() => {
     if (navItems.length && !navItems.some(([key]) => key === activeTab)) {
@@ -1887,6 +1936,10 @@ function App() {
       onPointerOut={handlePointerShineOut}
       onPointerLeave={(event) => clearPointerShine(event.currentTarget)}
     >
+      {backgroundInfo.exists && backgroundInfo.enabled && (
+        <div className="custom-background" aria-hidden="true" style={{ backgroundImage: `url("${API_BASE}/api/settings/background/image?v=${backgroundInfo.version}")` }} />
+      )}
+      <div className="theme-ambient" aria-hidden="true" />
       <header className="topbar panel-enter shine-surface">
         <div className="brand">
           <div className={`brand-mark ${logoInfo.exists ? "has-logo" : ""}`}>
@@ -2227,7 +2280,7 @@ function App() {
                 </div>
                 <div className="settings-checks">
                   <strong className="settings-checks-title">Output Options</strong>
-                  <label><input type="checkbox" checked={Boolean(reportConfig.graph_settings?.include_png)} onChange={(event) => updateNestedReportConfig("graph_settings", "include_png", event.target.checked)} /> Graph PNG</label>
+                  <label><input type="checkbox" checked={Boolean(reportConfig.graph_settings?.include_png)} onChange={(event) => updateNestedReportConfig("graph_settings", "include_png", event.target.checked)} /> Graph PNG overview + full PDF</label>
                   <label><input type="checkbox" checked={Boolean(reportConfig.graph_settings?.include_csv)} onChange={(event) => updateNestedReportConfig("graph_settings", "include_csv", event.target.checked)} /> Graph CSV</label>
                   <label><input type="checkbox" checked={Boolean(reportConfig.map_settings?.include_data_file)} onChange={(event) => updateNestedReportConfig("map_settings", "include_data_file", event.target.checked)} /> Map data files</label>
                   <label><input type="checkbox" checked={Boolean(reportConfig.map_settings?.include_case_details)} onChange={(event) => updateNestedReportConfig("map_settings", "include_case_details", event.target.checked)} /> Map case details</label>
@@ -2403,9 +2456,25 @@ function App() {
                 <label className="field">
                   <span>Theme</span>
                   <select value={theme} onChange={(event) => setTheme(event.target.value)}>
-                    {themes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                    {themeGroups.map((group) => <optgroup key={group.label} label={group.label}>{group.themes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</optgroup>)}
                   </select>
                 </label>
+                <div className="profile-card background-settings">
+                  <h3>Custom Background</h3>
+                  <p className="muted">Use your own image behind the interface. Frosted Lab and Spectrum Glass let more of the image show through.</p>
+                  {backgroundInfo.exists && <img className="background-preview" src={`${API_BASE}/api/settings/background/image?v=${backgroundInfo.version}`} alt="Saved custom background" />}
+                  <label className="field">
+                    <span>{backgroundInfo.exists ? "Replace background image" : "Load background image"}</span>
+                    <input type="file" accept="image/png,image/jpeg,image/webp" disabled={backgroundBusy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) changeBackground(file); }} />
+                    <small className="muted">PNG, JPG, or WebP, up to 20 MB. Images fill the window and may be cropped.</small>
+                  </label>
+                  <label className="setting-card toggle-setting">
+                    <span><strong>Show Custom Background</strong><small className="muted">Turning this off hides the image and keeps it saved for later.</small></span>
+                    <input type="checkbox" role="switch" checked={backgroundInfo.exists && backgroundInfo.enabled} disabled={!backgroundInfo.exists || backgroundBusy} onChange={(event) => changeBackground(event.target.checked)} />
+                  </label>
+                  {backgroundBusy && <p role="status">Saving background settings…</p>}
+                  {backgroundError && <p role="alert">{backgroundError}</p>}
+                </div>
                 <label className="setting-card toggle-setting">
                   <span><strong>Interface Animations</strong><small className="muted">Logo movement, pane highlights, border sweeps, and entry transitions.</small></span>
                   <input type="checkbox" checked={animationsEnabled} onChange={(event) => setAnimationsEnabled(event.target.checked)} />
@@ -2604,7 +2673,7 @@ function App() {
                 </div>
                 <div className="profile-card update-panel">
                   <h3>Portable Application Update</h3>
-                  <p className="muted">Checks the GitHub release and downloads a verified single EXE beside the current application. No installer or administrator access is required.</p>
+                  <p className="muted">Download and install updates here. CyberLab verifies the download, backs up your database, replaces the EXE, and reopens. Cases, settings, and saved images stay in place.</p>
                   {updateInfo && (
                     <dl className="config-list compact-config">
                       <dt>Installed</dt><dd>v{updateInfo.current_version || appInfo.version}</dd>
@@ -2615,9 +2684,17 @@ function App() {
                     </dl>
                   )}
                   <div className="form-actions">
-                    <button className="ghost-action" type="button" onClick={checkPortableUpdate} disabled={busy}><RefreshCw size={16} /> Check</button>
-                    {updateInfo?.update_available && <button className="primary-action inline" type="button" onClick={downloadPortableUpdate} disabled={busy}><Download size={16} /> Download EXE</button>}
+                    <button className="ghost-action" type="button" onClick={checkPortableUpdate} disabled={busy || updateRunning}><RefreshCw size={16} /> Check</button>
+                    {updateInfo?.update_available && <>
+                      {updateInfo.can_install && <button className="primary-action inline" type="button" onClick={installPortableUpdate} disabled={busy || updateRunning}><Download size={16} /> Download &amp; Install</button>}
+                      <button className="ghost-action" type="button" onClick={downloadPortableUpdate} disabled={busy || updateRunning}>Download EXE only</button>
+                      {!updateInfo.can_install && <p className="muted">Automatic installation is available when running the packaged Windows EXE.</p>}
+                    </>}
                   </div>
+                  {updateProgress.message && <div role={updateProgress.phase === "failed" ? "alert" : "status"} className="update-progress">
+                    <p>{updateProgress.message}</p>
+                    {updateProgress.phase === "downloading" && <><progress aria-label="Update download progress" max={updateProgress.total_bytes || 1} value={updateProgress.downloaded_bytes || 0} /><small>{formatBytes(updateProgress.downloaded_bytes || 0)} / {formatBytes(updateProgress.total_bytes || 0)}</small></>}
+                  </div>}
                 </div>
                 <div className="profile-card">
                   <h3>Legacy Import</h3>

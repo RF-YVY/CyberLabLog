@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
+import re
+import sys
 import time
 import shutil
 import sqlite3
@@ -11,6 +14,7 @@ import urllib.error
 import urllib.request
 import zipfile
 from calendar import monthrange
+from contextlib import closing
 from datetime import datetime, time as datetime_time, timedelta
 from pathlib import Path
 from typing import Any
@@ -48,7 +52,8 @@ from geocoding import ensure_location_cached, geocode_missing_case_locations, ge
 from legacy_import import import_app_data_zip, import_database_file
 from native_exports import run_native_exports
 from portable_backup import create_encrypted_backup, restore_encrypted_backup
-from paths import PROJECT_ROOT, active_db_path, backup_dir, data_dir, logo_path, marker_icon_path
+from update_installer import launch_handoff
+from paths import PROJECT_ROOT, active_db_path, backup_dir, data_dir, logo_path, marker_icon_path, background_image_path
 from cyberlab_workflow import (
     add_custody_event,
     case_changes,
@@ -80,10 +85,13 @@ FRONTEND_ASSETS = FRONTEND_DIST / "assets"
 RUNTIME_STARTED_AT = time.monotonic()
 LAST_BROWSER_HEARTBEAT = 0.0
 SHUTDOWN_REQUESTED = False
-APP_VERSION = "3.0.11"
+APP_VERSION = "3.0.12"
 GITHUB_REPO = "RF-YVY/CyberLabLog"
 UPDATE_CACHE_TTL_SECONDS = 900
 UPDATE_CACHE: dict[str, Any] = {"checked_at": 0.0, "value": None}
+UPDATE_LOCK = threading.Lock()
+UPDATE_STATE: dict[str, Any] = {"phase": "idle", "downloaded_bytes": 0, "total_bytes": 0, "message": ""}
+UPDATE_DOWNLOAD_LOCK = threading.Lock()
 SCHEDULER_LOCK = threading.Lock()
 SCHEDULER_STARTED = False
 SCHEDULER_STATUS: dict[str, Any] = {
@@ -355,10 +363,14 @@ def _latest_release_asset() -> dict[str, Any]:
     }
 
 
-def _download_release_asset(asset: dict[str, Any]) -> dict[str, Any]:
-    if not asset.get("url"):
-        raise ValueError("The release download URL is missing.")
-    version = str(asset.get("version") or "update").replace("/", "-").replace("\\", "-")
+def _download_release_asset(asset: dict[str, Any], progress=None) -> dict[str, Any]:
+    url = str(asset.get("url") or "")
+    if not url.startswith(f"https://github.com/{GITHUB_REPO}/releases/download/"):
+        raise ValueError("The download must come from this application's GitHub releases.")
+    expected = str(asset.get("digest") or "").lower()
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", expected):
+        raise ValueError("The release has no valid SHA-256 digest. Installation was stopped.")
+    version = re.sub(r"[^A-Za-z0-9._-]", "_", str(asset.get("version") or "update"))
     target = PROJECT_ROOT / f"CyberLab Case Tracker Update {version}.exe"
     temporary = target.with_suffix(".download")
     request = urllib.request.Request(
@@ -366,25 +378,68 @@ def _download_release_asset(asset: dict[str, Any]) -> dict[str, Any]:
         headers={"User-Agent": f"CyberLab-Case-Tracker/{APP_VERSION}"},
     )
     digest = hashlib.sha256()
+    downloaded = 0
+    size = int(asset.get("size") or 0)
+    if not 0 < size <= 512 * 1024 * 1024:
+        raise ValueError("The release executable size is missing or invalid.")
+    if not UPDATE_DOWNLOAD_LOCK.acquire(blocking=False):
+        raise ValueError("An update download is already running.")
     try:
         with urllib.request.urlopen(request, timeout=60.0) as response, temporary.open("wb") as output:
             while chunk := response.read(1024 * 1024):
                 output.write(chunk)
                 digest.update(chunk)
+                downloaded += len(chunk)
+                if downloaded > size:
+                    raise ValueError("The download is larger than the release asset.")
+                if progress:
+                    progress(downloaded, size)
         actual_sha256 = digest.hexdigest()
-        expected = str(asset.get("digest") or "")
-        if expected.lower().startswith("sha256:") and actual_sha256.lower() != expected.split(":", 1)[1].lower():
+        if downloaded != size:
+            raise ValueError("The update download is incomplete.")
+        if actual_sha256.lower() != expected.split(":", 1)[1]:
             raise ValueError("The downloaded update failed SHA-256 verification.")
+        with temporary.open("rb") as executable:
+            if executable.read(2) != b"MZ":
+                raise ValueError("The download is not a Windows executable.")
         temporary.replace(target)
     finally:
         temporary.unlink(missing_ok=True)
+        UPDATE_DOWNLOAD_LOCK.release()
     return {
         **asset,
         "path": str(target),
         "sha256": digest.hexdigest(),
-        "verified": not str(asset.get("digest") or "").lower().startswith("sha256:")
-        or digest.hexdigest().lower() == str(asset["digest"]).split(":", 1)[1].lower(),
+        "verified": True,
     }
+
+
+def _set_update_state(**values: Any) -> None:
+    with UPDATE_LOCK:
+        UPDATE_STATE.update(values)
+
+
+def _install_update_worker() -> None:
+    global SHUTDOWN_REQUESTED
+    try:
+        asset = _latest_release_asset()
+        if not asset["update_available"]:
+            _set_update_state(phase="current", message="This application is already current.")
+            return
+        _set_update_state(phase="downloading", version=asset["version"], total_bytes=asset["size"], message="Downloading update…")
+        result = _download_release_asset(asset, lambda done, total: _set_update_state(downloaded_bytes=done, total_bytes=total))
+        _set_update_state(phase="preparing", message="Verified download. Backing up the database…")
+        backup = backup_dir() / f"pre_update_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.db"
+        with closing(sqlite3.connect(active_db_path())) as source, closing(sqlite3.connect(backup)) as destination:
+            source.backup(destination)
+        record_audit("application", None, "update_install", None, f"Installing {asset['version']}", {"backup": str(backup), "sha256": result["sha256"]})
+        launch_handoff(Path(result["path"]), Path(sys.executable), result["sha256"], os.getpid())
+        _set_update_state(phase="installing", message="Closing CyberLab to install the update. The app will reopen automatically.")
+        # Give the GUI one polling interval to show the handoff before shutdown.
+        time.sleep(2)
+        SHUTDOWN_REQUESTED = True
+    except Exception as exc:
+        _set_update_state(phase="failed", message=str(exc))
 
 
 def _file_info(path: Path) -> dict[str, Any]:
@@ -584,7 +639,7 @@ def app_info() -> dict[str, Any]:
 @app.get("/api/update/info")
 def portable_update_info() -> dict[str, Any]:
     try:
-        return {"current_version": APP_VERSION, **_latest_release_asset()}
+        return {"current_version": APP_VERSION, "can_install": sys.platform == "win32" and bool(getattr(sys, "frozen", False)), **_latest_release_asset()}
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Could not check the latest release: {exc}") from exc
 
@@ -600,6 +655,28 @@ def download_portable_update() -> dict[str, Any]:
         return {"ok": True, "downloaded": True, **result}
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Could not download the update: {exc}") from exc
+
+
+@app.get("/api/update/status")
+def update_install_status() -> dict[str, Any]:
+    with UPDATE_LOCK:
+        return dict(UPDATE_STATE)
+
+
+@app.post("/api/update/install")
+def install_portable_update() -> dict[str, Any]:
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        raise HTTPException(status_code=400, detail="Run the packaged Windows EXE to install an update from the GUI.")
+    with UPDATE_LOCK:
+        if UPDATE_STATE["phase"] in {"checking", "downloading", "preparing", "installing"}:
+            raise HTTPException(status_code=409, detail="An update installation is already running.")
+        UPDATE_STATE.update(phase="checking", downloaded_bytes=0, total_bytes=0, message="Checking latest release…")
+    try:
+        threading.Thread(target=_install_update_worker, daemon=True).start()
+    except Exception as exc:
+        _set_update_state(phase="failed", message=str(exc))
+        raise HTTPException(status_code=500, detail="Could not start the update worker") from exc
+    return {"ok": True, "phase": "checking"}
 
 
 @app.get("/api/cases")
@@ -1131,6 +1208,64 @@ def create_support_bundle() -> dict[str, Any]:
 def read_logo_info() -> dict[str, Any]:
     path = logo_path()
     return {"exists": path.exists(), "path": str(path) if path.exists() else "", "version": path.stat().st_mtime_ns if path.exists() else 0}
+
+
+class BackgroundPreferences(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/settings/background")
+def read_background_info() -> dict[str, Any]:
+    path = background_image_path()
+    preferences = get_json_setting("background_preferences", {})
+    return {"exists": path.exists(), "enabled": bool(preferences.get("enabled", False)),
+            "version": path.stat().st_mtime_ns if path.exists() else 0}
+
+
+@app.put("/api/settings/background")
+def update_background_preferences(payload: BackgroundPreferences) -> dict[str, Any]:
+    set_json_setting("background_preferences", {"enabled": payload.enabled})
+    return read_background_info()
+
+
+@app.get("/api/settings/background/image")
+def read_background_image() -> FileResponse:
+    path = background_image_path()
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="No custom background configured")
+    return FileResponse(path, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/settings/background")
+async def upload_background(file: UploadFile = File(...)) -> dict[str, Any]:
+    from io import BytesIO
+    from PIL import Image, ImageOps, UnidentifiedImageError
+
+    content = await file.read(20 * 1024 * 1024 + 1)
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Background image must be 20 MB or smaller")
+    target = background_image_path()
+    temporary = None
+    try:
+        with Image.open(BytesIO(content)) as source:
+            if source.format not in {"PNG", "JPEG", "WEBP"}:
+                raise ValueError("Choose a PNG, JPG, or WebP image")
+            if source.width * source.height > 40_000_000:
+                raise ValueError("Background image must contain no more than 40 million pixels")
+            image = ImageOps.exif_transpose(source).convert("RGB")
+            image.thumbnail((3840, 2160), Image.Resampling.LANCZOS)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(dir=target.parent, delete=False, suffix=".png") as temp:
+                temporary = Path(temp.name)
+            image.save(temporary, "PNG")
+        temporary.replace(target)
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as exc:
+        raise HTTPException(status_code=400, detail=f"Could not load background image: {exc}") from exc
+    finally:
+        if temporary:
+            temporary.unlink(missing_ok=True)
+    set_json_setting("background_preferences", {"enabled": True})
+    return read_background_info()
 
 
 @app.get("/api/settings/logo/image")

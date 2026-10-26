@@ -1,6 +1,8 @@
 # CyberLab Modernization
 
-Current release: **v3.0.11** (October 12, 2026).
+Current release: **v3.0.12** (October 26, 2026).
+
+Packaged Windows builds support **Settings → Portable Application Update → Check → Download & Install**. The update is verified with GitHub's SHA-256 digest and exact asset size before a database backup and independent Windows helper replace the EXE and restart it. The helper clears inherited PyInstaller extraction variables, retries locked-file replacement, keeps `.exe.previous` for recovery, and logs to `app_data/update-install.log`. Failed downloads leave the running app intact and can be retried. A source checkout supports download-only updates.
 
 This folder is the migration path from the legacy Tkinter desktop app to a modern
 browser UI with a Python backend.

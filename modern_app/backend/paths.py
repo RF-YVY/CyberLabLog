@@ -38,3 +38,7 @@ def logo_path() -> Path:
 
 def marker_icon_path() -> Path:
     return data_dir() / "marker_icon.png"
+
+
+def background_image_path() -> Path:
+    return data_dir() / "custom_background.png"

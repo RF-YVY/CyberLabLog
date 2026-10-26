@@ -73,6 +73,7 @@ ENV/
 # Build artifacts
 build/
 dist/
+/output/
 *.db-shm
 *.db-wal
 modern_app/frontend/node_modules/

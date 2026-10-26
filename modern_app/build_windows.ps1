@@ -10,10 +10,32 @@ $FrontendRoot = Join-Path $AppRoot "frontend"
 $DistRoot = Join-Path $RepoRoot "dist"
 $BuildRoot = Join-Path $AppRoot "build"
 $IconPath = Join-Path $RepoRoot "digital.ico"
+$VersionMatch = [regex]::Match([System.IO.File]::ReadAllText((Join-Path $AppRoot "backend/main.py")), 'APP_VERSION = "([0-9.]+)"')
+if (-not $VersionMatch.Success) { throw "Could not read APP_VERSION" }
+$AppVersion = $VersionMatch.Groups[1].Value
+$VersionParts = $AppVersion.Split('.')
+if ($VersionParts.Count -ne 3) { throw "APP_VERSION must contain major.minor.patch" }
+$VersionTuple = ($VersionParts -join ', ') + ', 0'
+New-Item -ItemType Directory -Force $BuildRoot | Out-Null
+$VersionFile = Join-Path $BuildRoot "windows_version_info.txt"
+@"
+VSVersionInfo(
+  ffi=FixedFileInfo(filevers=($VersionTuple), prodvers=($VersionTuple), mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),
+  kids=[StringFileInfo([StringTable('040904B0', [
+    StringStruct('FileDescription', 'CyberLab Case Tracker'),
+    StringStruct('FileVersion', '$AppVersion.0'),
+    StringStruct('InternalName', 'CyberLab Case Tracker'),
+    StringStruct('OriginalFilename', 'CyberLab Case Tracker.exe'),
+    StringStruct('ProductName', 'CyberLab Case Tracker'),
+    StringStruct('ProductVersion', '$AppVersion')
+  ])]), VarFileInfo([VarStruct('Translation', [1033, 1200])])]
+)
+"@ | Set-Content -LiteralPath $VersionFile -Encoding utf8
 
 Push-Location $FrontendRoot
 try {
     npm run build
+    if ($LASTEXITCODE -ne 0) { throw "Frontend build failed" }
 }
 finally {
     Pop-Location
@@ -43,6 +65,7 @@ try {
         "--hidden-import", "family_report",
         "--hidden-import", "custom_report",
         "--hidden-import", "portable_backup",
+        "--hidden-import", "update_installer",
         "--hidden-import", "sqlite3",
         "--hidden-import", "openpyxl",
         "--hidden-import", "reportlab",
@@ -55,7 +78,9 @@ try {
         "--collect-submodules", "reportlab",
         "--collect-submodules", "cryptography",
         "--hidden-import", "matplotlib.backends.backend_agg",
+        "--hidden-import", "matplotlib.backends.backend_pdf",
         "--icon", $IconPath,
+        "--version-file", $VersionFile,
         "--exclude-module", "PySide6",
         "--exclude-module", "PyQt5",
         "--exclude-module", "PyQt6",
@@ -75,6 +100,7 @@ try {
     }
     $pyinstallerArgs += "launch_modern_app.py"
     python @pyinstallerArgs
+    if ($LASTEXITCODE -ne 0) { throw "EXE build failed" }
 }
 finally {
     Pop-Location
