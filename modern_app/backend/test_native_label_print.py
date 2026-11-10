@@ -2,6 +2,7 @@ import base64
 from io import BytesIO
 import json
 import unittest
+import sys
 from unittest.mock import patch
 
 from PIL import Image
@@ -11,6 +12,30 @@ import main
 
 
 class NativeLabelPrintTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "win32", "Windows drawing rectangles")
+    def test_destination_fits_inside_hardware_printable_area_without_distortion(self):
+        script = "Add-Type -AssemblyName System.Drawing\n" + printing.LAYOUT_SCRIPT + r"""
+$area = New-Object System.Drawing.RectangleF(10,5,211,390)
+$rect = Get-LabelRectangle 694 1200 231 400 $area
+@{x=$rect.X; y=$rect.Y; width=$rect.Width; height=$rect.Height} | ConvertTo-Json -Compress
+"""
+        result = printing._powershell(script)
+        self.assertGreaterEqual(result["x"], 12)
+        self.assertGreaterEqual(result["y"], 7)
+        self.assertLessEqual(result["x"] + result["width"], 219.001)
+        self.assertLessEqual(result["y"] + result["height"], 393.001)
+        self.assertAlmostEqual(result["width"] / result["height"], 694 / 1200, places=6)
+        # Some drivers expose a rectangle extending beyond the selected stock.
+        oversize = printing._powershell("Add-Type -AssemblyName System.Drawing\n" + printing.LAYOUT_SCRIPT + r"""
+$area = New-Object System.Drawing.RectangleF(-5,-5,300,500)
+$rect = Get-LabelRectangle 694 1200 231 400 $area
+@{x=$rect.X; y=$rect.Y; width=$rect.Width; height=$rect.Height} | ConvertTo-Json -Compress
+""")
+        self.assertGreaterEqual(oversize["x"], 2)
+        self.assertGreaterEqual(oversize["y"], 2)
+        self.assertLessEqual(oversize["x"] + oversize["width"], 229.001)
+        self.assertLessEqual(oversize["y"] + oversize["height"], 398.001)
+
     def test_dymo_feed_geometry_and_other_printers(self):
         self.assertEqual(printing.native_geometry(4, 2.3125, "DYMO LabelWriter 550"), {"paper_width": 231, "paper_height": 400, "rotate": True})
         self.assertEqual(printing.native_geometry(2.3125, 4, "DYMO LabelWriter 550")["rotate"], False)

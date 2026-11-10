@@ -9,9 +9,11 @@ export function normalizeLabelSettings(value = {}) {
 }
 
 export function labelFromCase(row = {}) {
-  const parts = String(row.case_number || "").trim().split("-");
-  const exhibit = parts.length >= 4 && /^\d+$/.test(parts.at(-1)) ? parts.at(-1) : "";
-  return { exhibit: exhibit || row.evidence_number || "", case: row.case_number || "", agency: row.agency || "", date: String(row.start_date || "").slice(0, 10), type: row.device_type || "", brand: row.model || row.brand || "", serial: row.serial_number || "", location: row.storage_location || row.location_name || "", description: row.description || row.notes || "", subject: row.investigation_subject || "" };
+  const number = String(row.case_number || "").trim();
+  // Match the same numeric evidence suffix used by the case-family workflow.
+  const suffix = number.match(/^(.+?-\d{3,})-(\d+)$/);
+  const exhibit = suffix ? suffix[2] : number ? "1" : row.evidence_number || "";
+  return { exhibit, case: row.case_number || "", agency: row.agency || "", date: String(row.start_date || "").slice(0, 10), type: row.device_type || "", brand: row.model || row.brand || "", serial: row.serial_number || "", location: row.storage_location || row.location_name || "", description: row.description || row.notes || "", subject: row.investigation_subject || "" };
 }
 
 export function visibleLabelFields(values, extra = []) {
@@ -21,8 +23,11 @@ export function visibleLabelFields(values, extra = []) {
 export function savedLabelFromCase(row = {}) {
   let saved = row.evidence_label;
   try { if (typeof saved === "string") saved = JSON.parse(saved); } catch { saved = null; }
+  const defaults = labelFromCase(row);
+  const values = { ...defaults, ...(saved?.values || {}) };
+  if (!String(values.exhibit ?? "").trim()) values.exhibit = defaults.exhibit;
   return {
-    values: { ...labelFromCase(row), ...(saved?.values || {}) },
+    values,
     extra: Array.isArray(saved?.extra) ? saved.extra : [],
     barcode: typeof saved?.barcode === "string" ? saved.barcode : row.case_number || "",
   };

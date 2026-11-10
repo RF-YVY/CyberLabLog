@@ -82,8 +82,21 @@ def print_images(images, width, height, printer):
         return _powershell(PRINT_SCRIPT, job=job, timeout=120)
 
 
-PRINT_SCRIPT = r"""
-Add-Type -AssemblyName System.Drawing
+LAYOUT_SCRIPT = r"""
+function Get-LabelRectangle($iw, $ih, $pageWidth, $pageHeight, $printable) {
+    $physical = New-Object System.Drawing.RectangleF(0,0,$pageWidth,$pageHeight)
+    $safe = [System.Drawing.RectangleF]::Intersect($physical, $printable)
+    # A half-millimeter allowance avoids edge loss from driver rounding/feed tolerance.
+    $safe.Inflate(-2.0,-2.0)
+    if ($safe.Width -le 0 -or $safe.Height -le 0) { throw 'The printer reported an invalid printable label area' }
+    $scale = [Math]::Min($safe.Width / $iw, $safe.Height / $ih)
+    $width = $iw * $scale; $height = $ih * $scale
+    return New-Object System.Drawing.RectangleF(($safe.X + ($safe.Width - $width)/2), ($safe.Y + ($safe.Height - $height)/2), $width, $height)
+}
+"""
+
+
+PRINT_SCRIPT = "Add-Type -AssemblyName System.Drawing\n" + LAYOUT_SCRIPT + r"""
 $job = Get-Content -LiteralPath $env:CYBERLAB_LABEL_JOB -Raw -Encoding UTF8 | ConvertFrom-Json
 $doc = New-Object System.Drawing.Printing.PrintDocument
 $doc.PrinterSettings.PrinterName = $job.printer
@@ -114,7 +127,7 @@ $handler = [System.Drawing.Printing.PrintPageEventHandler] {
         $event.Graphics.TranslateTransform(-$event.PageSettings.HardMarginX, -$event.PageSettings.HardMarginY)
         $event.Graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
         $event.Graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
-        $dest = New-Object System.Drawing.Rectangle(0,0,$event.PageBounds.Width,$event.PageBounds.Height)
+        $dest = Get-LabelRectangle $img.Width $img.Height $event.PageBounds.Width $event.PageBounds.Height $event.PageSettings.PrintableArea
         $event.Graphics.DrawImage($img, $dest)
     } finally { $img.Dispose() }
     $script:pageIndex++

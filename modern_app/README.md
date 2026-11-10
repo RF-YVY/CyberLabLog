@@ -1,6 +1,6 @@
 # CyberLab Modernization
 
-Current release: **v3.0.18** (November 10, 2026).
+Current release: **v3.0.19** (November 10, 2026).
 
 Coordinate handling rejects zero/zero, partial, non-finite, and out-of-range pairs as unresolved, while accepting a valid pair containing a single zero. Refresh Missing Locations repairs invalid case pairs using a valid cache or sibling record before requesting a geocoder lookup; invalid caches are retried. Writes match snapshot coordinates to preserve concurrent manual edits. A database backup precedes the refresh operation. Form serialization preserves null/empty GPS fields.
 
@@ -192,3 +192,5 @@ Import options are exposed by API and will be surfaced in the UI:
 Label printing uses ordinary HTTP PDF files for office-browser compatibility. Preparation has timeouts and visible errors, and the print tab supplies open/download links if automatic navigation is blocked. Generated PDFs are local to app_data/label_print_previews and expire from disk after 24 hours when new previews are prepared.
 
 Print Label / Print All Labels now print directly through Windows. Select a label printer in the generator or case-wide output; save a default in Evidence Label Settings. Dymo landscape images rotate counter-clockwise into portrait feed orientation, matching the 30256 shipping-stock dimensions. Driver paper dimensions are checked before drawing each label across the physical page. Open Print PDF / Open All Labels PDF retain the exact-size HTTP PDF alternative. Printer output must be checked on the target hardware.
+
+Direct printer output is centered and fitted proportionally within the driver-reported printable area, with a 0.02-inch edge allowance to avoid clipping. A case without an evidence suffix defaults to EXHIBIT 1; saved labels with blank exhibit values recover the inferred number on reopening or batch output.

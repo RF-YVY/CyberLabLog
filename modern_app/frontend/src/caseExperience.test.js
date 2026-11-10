@@ -53,9 +53,22 @@ test("label stock defaults to Dymo shipping labels and preserves explicit custom
 test("exhibit is inferred from an evidence suffix without treating the base case number as an exhibit", () => {
   assert.equal(labelFromCase({ case_number: "CC-26-1234-1" }).exhibit, "1");
   assert.equal(labelFromCase({ case_number: "CC-26-1234-2" }).exhibit, "2");
-  assert.equal(labelFromCase({ case_number: "CC-26-1234" }).exhibit, "");
-  assert.equal(labelFromCase({ case_number: "CC-26-1234-A" }).exhibit, "");
-  assert.equal(labelFromCase({ case_number: "CC-26-1234", evidence_number: "7" }).exhibit, "7");
+  assert.equal(labelFromCase({ case_number: "CC-26-1234" }).exhibit, "1");
+  assert.equal(labelFromCase({ case_number: "CC-26-1234-A" }).exhibit, "1");
+  assert.equal(labelFromCase({ case_number: "26-1234-3" }).exhibit, "3");
+  assert.equal(labelFromCase({ case_number: "CC-26-15529" }).exhibit, "1");
+  assert.equal(labelFromCase({ case_number: "CC-26-1234", evidence_number: "7" }).exhibit, "1");
+});
+
+test("older saved labels with blank exhibits inherit the suffix or exhibit 1", () => {
+  for (const [number, expected] of [["CC-26-15529", "1"], ["CC-26-15529-2", "2"], ["CC-26-15529-3", "3"]]) {
+    for (const blank of ["", " ", null]) {
+      const label = savedLabelFromCase({ case_number: number, evidence_label: JSON.stringify({ values: { exhibit: blank, description: "" } }) });
+      assert.equal(label.values.exhibit, expected);
+      assert.equal(label.values.description, "");
+    }
+  }
+  assert.equal(savedLabelFromCase({ case_number: "CC-26-15529", evidence_label: { values: { exhibit: "7" } } }).values.exhibit, "7");
 });
 
 test("evidence labels populate case data without mutating the case", () => {
