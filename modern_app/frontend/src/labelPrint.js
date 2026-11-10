@@ -37,3 +37,11 @@ export async function openPreparedLabelPdf(images, settings, target, api) {
   try { target.location.replace(url.href); }
   catch { /* Keep the ordinary HTTP open/download links if browser policy blocks automatic navigation. */ }
 }
+
+export async function sendLabelsToPrinter(images, settings, printer, api) {
+  if (!printer) throw new Error("Select a label printer first.");
+  return withLabelTimeout(api("/api/evidence-labels/print-direct", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ images, width: settings.width, height: settings.height, printer_name: printer }),
+  }), "The printer has not responded. Check its queue before retrying to avoid duplicate labels.", 130000);
+}

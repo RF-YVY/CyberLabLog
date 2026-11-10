@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { renderToStaticMarkup } from "react-dom/server";
 import { zipSync } from "fflate";
-import { openPreparedLabelPdf, printWindowStatus, withLabelTimeout } from "./labelPrint.js";
+import { openPreparedLabelPdf, printWindowStatus, withLabelTimeout, sendLabelsToPrinter } from "./labelPrint.js";
 import QRCode from "qrcode";
 import { toPng } from "html-to-image";
 import { labelFields, savedLabelFromCase, visibleLabelFields, normalizeLabelSettings } from "./evidenceLabel.js";
@@ -10,10 +10,31 @@ import { labelFields, savedLabelFromCase, visibleLabelFields, normalizeLabelSett
 const emptySettings = normalizeLabelSettings();
 const printerSettings = normalizeLabelSettings;
 
+function useLabelPrinters(api, preferred) {
+  const [names, setNames] = useState([]), [printer, setPrinter] = useState(""), [message, setMessage] = useState("");
+  async function refresh() {
+    setMessage("Loading printers…");
+    try {
+      const result = await withLabelTimeout(api("/api/evidence-labels/printers"), "Printer discovery timed out.", 15000);
+      setNames(result.printers || []);
+      setPrinter(current => result.printers?.includes(current) ? current : result.printers?.includes(preferred) ? preferred : result.recommended || "");
+      setMessage(result.printers?.length ? "" : "No Windows printers found. Open Print PDF is still available.");
+    } catch { setMessage("Could not load Windows printers. Refresh printers or use Open Print PDF."); }
+  }
+  useEffect(() => { refresh(); }, []);
+  useEffect(() => { if (preferred && names.includes(preferred)) setPrinter(preferred); }, [preferred, names]);
+  return { names, printer, setPrinter, refresh, message };
+}
+
+function LabelPrinterSelect({ info }) {
+  return <div className="form-actions"><label className="field"><span>Label printer</span><select value={info.printer} onChange={event => info.setPrinter(event.target.value)}><option value="">Select a printer</option>{info.names.map(name => <option key={name} value={name}>{name}</option>)}</select></label><button type="button" className="ghost-action" onClick={info.refresh}>Refresh printers</button>{info.message && <small role="status">{info.message}</small>}</div>;
+}
+
 export function EvidenceLabelSettings({ api }) {
   const [settings, setSettings] = useState(emptySettings);
   const [loaded, setLoaded] = useState(false);
   const [message, setMessage] = useState("");
+  const printers = useLabelPrinters(api, settings.printer_name);
   useEffect(() => { api("/api/settings/json/evidence_label").then(result => { setSettings(printerSettings(result.value)); setLoaded(true); }).catch(error => setMessage(error.message)); }, []);
   async function loadLogo(file) {
     if (!file) return;
@@ -23,7 +44,7 @@ export function EvidenceLabelSettings({ api }) {
       setSettings(current => ({ ...current, logo: data })); setMessage("Logo loaded. Save settings to keep it.");
     } catch { setMessage("Could not read the image."); }
   }
-  return <form className="profile-card" onSubmit={async event => { event.preventDefault(); try { await api("/api/settings/json/evidence_label", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: settings }) }); setMessage("Evidence label settings saved."); } catch (error) { setMessage(error.message); } }}>
+  return <form className="profile-card" onSubmit={async event => { event.preventDefault(); try { await api("/api/settings/json/evidence_label", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value: { ...settings, printer_name: printers.printer } }) }); setMessage("Evidence label settings saved."); } catch (error) { setMessage(error.message); } }}>
     <h3>Evidence Label Settings</h3><p>Agency and division appear at the top of every label. The logo appears centered on the right.</p>
     <fieldset disabled={!loaded} className="label-settings-fields"><div className="form-grid two-col">{[["agency", "Agency title"], ["division", "Division title"]].map(([key, title]) => <label className="field" key={key}><span>{title}</span><input value={settings[key]} onChange={event => setSettings({ ...settings, [key]: event.target.value })} /></label>)}
     <label className="field"><span>Label stock</span><select value={settings.paper} onChange={event => setSettings(current => normalizeLabelSettings({ ...current, paper: event.target.value }))}><option value="dymo550">Dymo 550 — 4″ × 2⁵⁄₁₆″ (landscape)</option><option value="custom">Custom size</option></select></label>
@@ -31,6 +52,7 @@ export function EvidenceLabelSettings({ api }) {
     </div><p>Content fits within the selected dimensions. Labels never grow taller as fields are added.</p>
     <label className="field"><span>Label logo</span><input type="file" accept="image/png,image/jpeg,image/webp" onChange={event => loadLogo(event.target.files?.[0])} /></label>
     {settings.logo && <div><img src={settings.logo} alt="Label logo" style={{ maxWidth: 100, maxHeight: 80 }} /><button type="button" className="ghost-action" onClick={() => setSettings({ ...settings, logo: "" })}>Remove logo</button></div>}
+    <LabelPrinterSelect info={printers} />
     <button className="primary-action inline">Save Label Settings</button></fieldset><p role="status">{message}</p>
   </form>;
 }
@@ -42,6 +64,7 @@ export function EvidenceLabelGenerator({ row, api, onClose, onSaved }) {
   const [values, setValues] = useState(initial.values);
   const [extra, setExtra] = useState(initial.extra);
   const [settings, setSettings] = useState(emptySettings);
+  const printers = useLabelPrinters(api, settings.printer_name);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [barcodeError, setBarcodeError] = useState("");
@@ -82,10 +105,11 @@ export function EvidenceLabelGenerator({ row, api, onClose, onSaved }) {
     setSaving(true);
     let printWindow;
     try {
-      if (action === "print") printWindow = openLabelPrintWindow();
+      if (action === "pdf") printWindow = openLabelPrintWindow();
       await saveLabel(); setSaving(true);
       const url = await createLabelPng(label.current, settings);
-      if (action === "print") await openPreparedLabelPdf([url], settings, printWindow, api);
+      if (action === "pdf") await openPreparedLabelPdf([url], settings, printWindow, api);
+      else if (action === "print") { const result = await sendLabelsToPrinter([url], settings, printers.printer, api); setSaveMessage(`${result.count} label sent to ${result.printer}.`); }
       else downloadUrl(url, `evidence-${safeFilename(values.case || "label")}.png`);
     } catch (error) { printWindowStatus(printWindow, `Could not prepare the label: ${error.message}`); setError(error.message); }
     finally { setSaving(false); }
@@ -104,8 +128,10 @@ export function EvidenceLabelGenerator({ row, api, onClose, onSaved }) {
     <button className="ghost-action" disabled={saving || !loaded} onClick={() => saveLabel().catch(() => {})}>Save Label</button><p role="status">{saveMessage}</p>
     <h3>Label preview</h3><style>{labelStyles}</style><div className="label-preview-scroll"><EvidenceLabelFace labelRef={label} values={values} extra={extra} settings={settings} qrImage={qrImage} /></div>
     {fitError && <p role="alert">{fitError}</p>}
-    <p>{settings.paper === "dymo550" ? "Dymo 550 · 4″ × 2⁵⁄₁₆″ landscape" : `Custom label · ${settings.width}″ × ${settings.height}″`}. Print Label opens a PDF with no headers, footers, or page margins. Use the PDF viewer’s Print button, select matching label stock and Actual size / 100%. PNG size: {Math.round(settings.width * 300)} × {Math.round(settings.height * 300)} pixels.</p>
-    <button className="primary-action inline" disabled={saving || !loaded || qrPending || Boolean(barcodeError) || Boolean(fitError)} onClick={() => outputLabel("print")}>Print Label</button>
+    <p>{settings.paper === "dymo550" ? "Dymo 550 · 4″ × 2⁵⁄₁₆″ landscape" : `Custom label · ${settings.width}″ × ${settings.height}″`}. Print Label sends directly to the selected Windows printer at the label size, with no headers or footers. For Dymo, shipping-label feed direction is applied automatically. Open Print PDF is an alternate option. PNG size: {Math.round(settings.width * 300)} × {Math.round(settings.height * 300)} pixels.</p>
+    <LabelPrinterSelect info={printers} />
+    <button className="primary-action inline" disabled={saving || !loaded || !printers.printer || qrPending || Boolean(barcodeError) || Boolean(fitError)} onClick={() => outputLabel("print")}>Print Label</button>
+    <button className="ghost-action" disabled={saving || !loaded || qrPending || Boolean(barcodeError) || Boolean(fitError)} onClick={() => outputLabel("pdf")}>Open Print PDF</button>
     <button className="ghost-action" disabled={saving || !loaded || qrPending || Boolean(barcodeError) || Boolean(fitError)} onClick={() => outputLabel("download")}>Download PNG</button>
   </section></div>, document.body);
 }
@@ -155,7 +181,7 @@ async function createLabelPng(node, settings) {
     Object.assign(exportLabel.style, { position: "absolute", left: "-10000px", top: "0" });
     document.body.appendChild(exportLabel);
     await withLabelTimeout(Promise.all([...exportLabel.querySelectorAll("img")].map(img => img.decode())), "A label image could not be loaded. Reload the label logo and try again.", 10000);
-    return await withLabelTimeout(toPng(exportLabel, { width: settings.width * 96, height: settings.height * 96, canvasWidth: Math.round(settings.width * 300), canvasHeight: Math.round(settings.height * 300), pixelRatio: 1, backgroundColor: "#ffffff", style: { position: "static", left: "auto", top: "auto" } }), "Label image preparation timed out. Please try again.");
+    return await withLabelTimeout(toPng(exportLabel, { width: settings.width * 96, height: settings.height * 96, canvasWidth: Math.round(settings.width * 300), canvasHeight: Math.round(settings.height * 300), pixelRatio: 1, skipFonts: true, backgroundColor: "#ffffff", style: { position: "static", left: "auto", top: "auto" } }), "Label image preparation timed out. Please try again.");
   } finally { exportLabel.remove(); }
 }
 
@@ -167,7 +193,7 @@ function openLabelPrintWindow() {
   return target;
 }
 
-export async function outputFamilyLabels({ family, api, action, printWindow, onProgress = () => {} }) {
+export async function outputFamilyLabels({ family, api, action, printer, printWindow, onProgress = () => {} }) {
   onProgress("Loading exhibit labels…");
   const [config, rows] = await withLabelTimeout(Promise.all([
     api("/api/settings/json/evidence_label"),
@@ -200,33 +226,43 @@ export async function outputFamilyLabels({ family, api, action, printWindow, onP
       const url = await createLabelPng(item.node, settings);
       await saveLabelRecord(api, item.row, item.data);
       urls.push(url);
-      const bytes = Uint8Array.from(atob(url.split(",")[1]), char => char.charCodeAt(0));
-      files[`${String(index + 1).padStart(3, "0")}-evidence-${safeFilename(item.row.case_number)}.png`] = bytes;
+      if (action === "download") {
+        const bytes = Uint8Array.from(atob(url.split(",")[1]), char => char.charCodeAt(0));
+        files[`${String(index + 1).padStart(3, "0")}-evidence-${safeFilename(item.row.case_number)}.png`] = bytes;
+      }
     }
-    if (action === "print") await openPreparedLabelPdf(urls, settings, printWindow, api);
+    if (action === "print") {
+      const result = await sendLabelsToPrinter(urls, settings, printer, api);
+      return `${result.count} labels sent to ${result.printer}.`;
+    }
+    if (action === "pdf") await openPreparedLabelPdf(urls, settings, printWindow, api);
     else {
       const url = URL.createObjectURL(new Blob([zipSync(files, { level: 0 })], { type: "application/zip" }));
       downloadUrl(url, `evidence-labels-${safeFilename(family.base_case_number)}.zip`);
       setTimeout(() => URL.revokeObjectURL(url), 60000);
     }
-    return `${rows.length} labels ${action === "print" ? "opened in a PDF print preview with no headers or footers" : "downloaded as separate PNGs in a ZIP file"}.`;
+    return `${rows.length} labels ${action === "pdf" ? "opened in a PDF print preview with no headers or footers" : "downloaded as separate PNGs in a ZIP file"}.`;
   } finally { container.remove(); }
 }
 
 export function FamilyLabelActions({ family, api }) {
   const [busy, setBusy] = useState(false), [message, setMessage] = useState("");
+  const [preferred, setPreferred] = useState("");
+  const printers = useLabelPrinters(api, preferred);
+  useEffect(() => { api("/api/settings/json/evidence_label").then(result => setPreferred(result.value?.printer_name || "")).catch(() => {}); }, []);
   async function output(action) {
     setBusy(true);
     let printWindow;
     try {
-      if (action === "print") printWindow = openLabelPrintWindow();
-      setMessage(await outputFamilyLabels({ family, api, action, printWindow, onProgress: message => { setMessage(message); printWindowStatus(printWindow, message); } }));
+      if (action === "pdf") printWindow = openLabelPrintWindow();
+      setMessage(await outputFamilyLabels({ family, api, action, printer: printers.printer, printWindow, onProgress: message => { setMessage(message); printWindowStatus(printWindow, message); } }));
     }
     catch (error) { printWindowStatus(printWindow, `Could not prepare the labels: ${error.message}`); setMessage(`Label output failed: ${error.message}`); }
     finally { setBusy(false); }
   }
-  return <section aria-label="Case label output"><div className="form-actions">
-    <button type="button" className="ghost-action" disabled={busy || !family.members?.length} onClick={() => output("print")}>Print All Labels</button>
+  return <section aria-label="Case label output"><LabelPrinterSelect info={printers} /><div className="form-actions">
+    <button type="button" className="ghost-action" disabled={busy || !printers.printer || !family.members?.length} onClick={() => output("print")}>Print All Labels</button>
+    <button type="button" className="ghost-action" disabled={busy || !family.members?.length} onClick={() => output("pdf")}>Open All Labels PDF</button>
     <button type="button" className="ghost-action" disabled={busy || !family.members?.length} onClick={() => output("download")}>Download All PNGs</button>
-  </div><small>All completed and in-progress exhibits in this case. Downloads contain a separate PNG per exhibit in one ZIP file.</small><p role="status">{message}</p></section>;
+  </div><small>Print All Labels sends every completed and in-progress exhibit directly to the selected printer. Downloads contain a separate PNG per exhibit in one ZIP file.</small><p role="status">{message}</p></section>;
 }

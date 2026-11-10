@@ -3,7 +3,16 @@ import assert from "node:assert/strict";
 import { nextEvidenceForm } from "./evidenceEntry.js";
 import { validateCase, numberOrNull } from "./caseValidation.js";
 import { labelFromCase, savedLabelFromCase, visibleLabelFields, normalizeLabelSettings } from "./evidenceLabel.js";
-import { openPreparedLabelPdf, withLabelTimeout } from "./labelPrint.js";
+import { openPreparedLabelPdf, withLabelTimeout, sendLabelsToPrinter } from "./labelPrint.js";
+
+test("direct label printing sends exact dimensions and the selected printer without a PDF window", async () => {
+  let sent;
+  const result = await sendLabelsToPrinter(["label-image"], { width: 4, height: 2.3125 }, "DYMO LabelWriter 550", async (path, options) => { sent = { path, body: JSON.parse(options.body) }; return { success: true, count: 1 }; });
+  assert.equal(sent.path, "/api/evidence-labels/print-direct");
+  assert.deepEqual(sent.body, { images: ["label-image"], width: 4, height: 2.3125, printer_name: "DYMO LabelWriter 550" });
+  assert.equal(result.count, 1);
+  await assert.rejects(sendLabelsToPrinter([], { width: 4, height: 2 }, "", () => { throw new Error("Must not send"); }), /Select a label printer/);
+});
 
 test("print preview uses an ordinary HTTP PDF and leaves working fallback links if Edge blocks navigation", async () => {
   const links = [], requests = [];

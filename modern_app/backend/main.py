@@ -87,7 +87,7 @@ RUNTIME_STARTED_AT = time.monotonic()
 LAST_BROWSER_HEARTBEAT = 0.0
 SHUTDOWN_REQUESTED = False
 BROWSER_SESSIONS = BrowserSessions()
-APP_VERSION = "3.0.17"
+APP_VERSION = "3.0.18"
 GITHUB_REPO = "RF-YVY/CyberLabLog"
 UPDATE_CACHE_TTL_SECONDS = 900
 UPDATE_CACHE: dict[str, Any] = {"checked_at": 0.0, "value": None}
@@ -739,6 +739,28 @@ class LabelPrintPayload(BaseModel):
     images: list[str]
     width: float
     height: float
+
+
+class NativeLabelPrintPayload(LabelPrintPayload):
+    printer_name: str
+
+
+@app.get("/api/evidence-labels/printers")
+def label_printers() -> dict[str, Any]:
+    from native_label_print import list_printers
+    try:
+        return list_printers()
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/evidence-labels/print-direct")
+def print_labels_direct(payload: NativeLabelPrintPayload) -> dict[str, Any]:
+    from native_label_print import print_images
+    try:
+        return print_images(payload.images, payload.width, payload.height, payload.printer_name)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/evidence-labels/print-pdf")

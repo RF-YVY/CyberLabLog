@@ -1,6 +1,6 @@
 # CyberLab Modernization
 
-Current release: **v3.0.17** (November 10, 2026).
+Current release: **v3.0.18** (November 10, 2026).
 
 Coordinate handling rejects zero/zero, partial, non-finite, and out-of-range pairs as unresolved, while accepting a valid pair containing a single zero. Refresh Missing Locations repairs invalid case pairs using a valid cache or sibling record before requesting a geocoder lookup; invalid caches are retried. Writes match snapshot coordinates to preserve concurrent manual edits. A database backup precedes the refresh operation. Form serialization preserves null/empty GPS fields.
 
@@ -64,7 +64,7 @@ configured paper width and height; narrow windows can scroll horizontally.
 Agency and division titles each stay on one line and shrink to fit. Field text
 shrinks within the fixed label bounds. If it cannot fit at a readable size,
 printing and downloading are blocked until text is shortened or fields removed.
-Print Label creates an exact-size PDF inside CyberLab and opens it through a normal local HTTP address, with a full-page label image and no headers,
+Open Print PDF creates an exact-size PDF inside CyberLab and opens it through a normal local HTTP address, with a full-page label image and no headers,
 footers, or page margins. Use the PDF viewer's Print button, matching paper size,
 and Actual size / 100% scale. Printing uses one flattened label image per page to
 prevent field rows from splitting across pages. Download PNG uses fixed pixel
@@ -190,3 +190,5 @@ Import options are exposed by API and will be surfaced in the UI:
 - Upload a zipped `app_data` folder and merge it into the active `app_data`.
 
 Label printing uses ordinary HTTP PDF files for office-browser compatibility. Preparation has timeouts and visible errors, and the print tab supplies open/download links if automatic navigation is blocked. Generated PDFs are local to app_data/label_print_previews and expire from disk after 24 hours when new previews are prepared.
+
+Print Label / Print All Labels now print directly through Windows. Select a label printer in the generator or case-wide output; save a default in Evidence Label Settings. Dymo landscape images rotate counter-clockwise into portrait feed orientation, matching the 30256 shipping-stock dimensions. Driver paper dimensions are checked before drawing each label across the physical page. Open Print PDF / Open All Labels PDF retain the exact-size HTTP PDF alternative. Printer output must be checked on the target hardware.

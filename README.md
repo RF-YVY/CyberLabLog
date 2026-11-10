@@ -6,7 +6,11 @@ Download the EXE from Releases, place it in a folder on your PC, and create a de
 
 ![CyberLab Case Tracker modern browser UI](docs/images/cyberlab-modern-browser-ui.png)
 
-## Current Release: v3.0.17
+## Current Release: v3.0.18
+
+v3.0.18 adds direct Windows label printing. Select your printer in Evidence Label Settings, the label generator, or case-wide output. Dymo labels rotate to match the short-edge print head and long-edge feed direction; the driver stock size is selected explicitly to avoid browser scaling. PDF previews remain separate alternatives.
+
+### v3.0.17 improvements
 
 v3.0.17 fixes label print previews stuck on Preparing PDF in some office browsers. PDFs are now created inside CyberLab and served through a normal local address, with open/download fallback links and preparation timeouts. Fixed label dimensions and header/footer-free printing are preserved.
 

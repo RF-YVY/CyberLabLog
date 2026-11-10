@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import time
 from urllib.parse import urlencode
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 
@@ -45,6 +46,12 @@ def check_release(executable, version):
                 raise RuntimeError("Packaged app did not start")
             assert Path(health["database"]).parent.resolve() == root
             assert api("/openapi.json")["info"]["version"] == version
+            assert "printers" in api("/api/evidence-labels/printers")
+            try:
+                api("/api/evidence-labels/print-direct", {"images": [], "width": 4, "height": 2.3125, "printer_name": ""})
+                raise AssertionError("An unselected printer must be rejected")
+            except HTTPError as error:
+                assert error.code == 400
             row = api("/api/in-progress", {"case_number": "TEST-26-1234-1", "city_of_offense": "Oxford", "state_of_offense": "MS", "latitude": 34.366, "longitude": -89.519, "notes": "Disposable release test"})
             label = {"values": {"case": row["case_number"], "serial": "SMOKE-SERIAL", "exhibit": "1"}, "extra": [{"label": "Shelf", "value": "Test"}], "barcode": row["case_number"]}
             api(f"/api/in-progress/{row['id']}/evidence-label", label, "PUT")
@@ -66,7 +73,7 @@ def check_release(executable, version):
             assert "tile.openstreetmap.org" not in content
             with urlopen(base + "/api/reports/map?" + urlencode({"path": report["path"]}), timeout=30) as response:
                 assert "Custom county map" in response.read().decode()
-            print(f"PASS: Windows EXE {version}; isolated data; saved labels; HTTP label PDF; completion; bundled county map; report viewer")
+            print(f"PASS: Windows EXE {version}; printer discovery; direct-print validation (no physical job); isolated data; saved labels; HTTP label PDF; completion; bundled county map; report viewer")
         finally:
             if ready:
                 try:
