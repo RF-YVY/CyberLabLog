@@ -6,7 +6,11 @@ Download the EXE from Releases, place it in a folder on your PC, and create a de
 
 ![CyberLab Case Tracker modern browser UI](docs/images/cyberlab-modern-browser-ui.png)
 
-## Current Release: v3.0.16
+## Current Release: v3.0.17
+
+v3.0.17 fixes label print previews stuck on Preparing PDF in some office browsers. PDFs are now created inside CyberLab and served through a normal local address, with open/download fallback links and preparation timeouts. Fixed label dimensions and header/footer-free printing are preserved.
+
+### v3.0.16 improvements
 
 Evidence labels are available from New Case and completed/in-progress case details, with saved per-exhibit fields, agency/division branding, a right-side logo, QR codes, and exhibit numbers inferred from case suffixes. Labels use fixed dimensions: Dymo 550 shipping labels (4 × 2 5/16 inches) by default, or a custom size. Print single or all case labels through exact-size PDFs with no headers/footers or page margins; download individual PNGs or one ZIP with a separate PNG per exhibit.
 

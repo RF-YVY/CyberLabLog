@@ -3,22 +3,23 @@ import assert from "node:assert/strict";
 import { nextEvidenceForm } from "./evidenceEntry.js";
 import { validateCase, numberOrNull } from "./caseValidation.js";
 import { labelFromCase, savedLabelFromCase, visibleLabelFields, normalizeLabelSettings } from "./evidenceLabel.js";
-import { createLabelPdf } from "./labelPdf.js";
+import { openPreparedLabelPdf, withLabelTimeout } from "./labelPrint.js";
 
-test("print PDFs have one exact-size, full-page image per label with no added text", () => {
-  const image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC";
-  for (const settings of [{ width: 4, height: 2.3125 }, { width: 2, height: 5 }]) {
-    const pdf = createLabelPdf([image, image], settings);
-    assert.equal(pdf.getNumberOfPages(), 2);
-    for (let page = 1; page <= 2; page++) {
-      pdf.setPage(page);
-      assert.ok(Math.abs(pdf.internal.pageSize.getWidth() - settings.width) < 0.0001);
-      assert.ok(Math.abs(pdf.internal.pageSize.getHeight() - settings.height) < 0.0001);
-    }
-    const content = pdf.internal.pages.slice(1).map(page => page.join("\n")).join("\n");
-    assert.equal((content.match(/\/I0 Do/g) || []).length, 2);
-    assert.equal(content.includes("Tj"), false);
-  }
+test("print preview uses an ordinary HTTP PDF and leaves working fallback links if Edge blocks navigation", async () => {
+  const links = [], requests = [];
+  const target = { closed: false, document: { body: { textContent: "Preparing PDF", appendChild: item => links.push(item) }, createElement: () => ({ style: {} }) }, location: { replace: () => { throw new Error("Navigation restricted"); } } };
+  await openPreparedLabelPdf(["data:image/png;base64,test"], { width: 4, height: 2.3125 }, target, async (path, options) => { requests.push({ path, options }); return { url: "http://127.0.0.1:8768/api/evidence-labels/print-pdf/abcd.pdf" }; });
+  assert.equal(requests[0].path, "/api/evidence-labels/print-pdf");
+  assert.deepEqual(JSON.parse(requests[0].options.body), { images: ["data:image/png;base64,test"], width: 4, height: 2.3125 });
+  assert.match(target.document.body.textContent, /ready/);
+  assert.equal(links.length, 2);
+  assert.match(links[0].href, /^http:/);
+  assert.match(links[1].href, /download=true$/);
+});
+
+test("label preparation rejects stalled operations instead of leaving a waiting tab forever", async () => {
+  await assert.rejects(withLabelTimeout(new Promise(() => {}), "Preparation timed out", 5), /Preparation timed out/);
+  assert.equal(await withLabelTimeout(Promise.resolve("ready"), "timeout", 5), "ready");
 });
 
 test("saved exhibit labels restore extra fields, QR values, and deliberately blank fields", () => {

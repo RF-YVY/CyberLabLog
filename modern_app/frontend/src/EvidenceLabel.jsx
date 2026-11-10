@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { renderToStaticMarkup } from "react-dom/server";
 import { zipSync } from "fflate";
-import { createLabelPdf } from "./labelPdf.js";
+import { openPreparedLabelPdf, printWindowStatus, withLabelTimeout } from "./labelPrint.js";
 import QRCode from "qrcode";
 import { toPng } from "html-to-image";
 import { labelFields, savedLabelFromCase, visibleLabelFields, normalizeLabelSettings } from "./evidenceLabel.js";
@@ -85,9 +85,9 @@ export function EvidenceLabelGenerator({ row, api, onClose, onSaved }) {
       if (action === "print") printWindow = openLabelPrintWindow();
       await saveLabel(); setSaving(true);
       const url = await createLabelPng(label.current, settings);
-      if (action === "print") await printLabelImages([url], settings, printWindow);
+      if (action === "print") await openPreparedLabelPdf([url], settings, printWindow, api);
       else downloadUrl(url, `evidence-${safeFilename(values.case || "label")}.png`);
-    } catch (error) { printWindow?.close(); setError(error.message); }
+    } catch (error) { printWindowStatus(printWindow, `Could not prepare the label: ${error.message}`); setError(error.message); }
     finally { setSaving(false); }
   }
   return createPortal(<div className="modal-backdrop evidence-label-overlay"><section className="case-modal evidence-label-dialog" role="dialog" aria-modal="true" aria-labelledby="label-title" tabIndex={-1} ref={dialog} onKeyDown={event => {
@@ -146,7 +146,7 @@ function downloadUrl(url, filename) {
 
 async function saveLabelRecord(api, row, data) {
   const source = row._mode === "progress" || row.source === "progress" ? "in-progress" : "cases";
-  return api(`/api/${source}/${row.id}/evidence-label`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+  return withLabelTimeout(api(`/api/${source}/${row.id}/evidence-label`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }), "Saving the label timed out. Check CyberLab is running and try again.");
 }
 
 async function createLabelPng(node, settings) {
@@ -154,8 +154,8 @@ async function createLabelPng(node, settings) {
   try {
     Object.assign(exportLabel.style, { position: "absolute", left: "-10000px", top: "0" });
     document.body.appendChild(exportLabel);
-    await Promise.all([...exportLabel.querySelectorAll("img")].map(img => img.decode()));
-    return await toPng(exportLabel, { width: settings.width * 96, height: settings.height * 96, canvasWidth: Math.round(settings.width * 300), canvasHeight: Math.round(settings.height * 300), pixelRatio: 1, backgroundColor: "#ffffff", style: { position: "static", left: "auto", top: "auto" } });
+    await withLabelTimeout(Promise.all([...exportLabel.querySelectorAll("img")].map(img => img.decode())), "A label image could not be loaded. Reload the label logo and try again.", 10000);
+    return await withLabelTimeout(toPng(exportLabel, { width: settings.width * 96, height: settings.height * 96, canvasWidth: Math.round(settings.width * 300), canvasHeight: Math.round(settings.height * 300), pixelRatio: 1, backgroundColor: "#ffffff", style: { position: "static", left: "auto", top: "auto" } }), "Label image preparation timed out. Please try again.");
   } finally { exportLabel.remove(); }
 }
 
@@ -167,19 +167,12 @@ function openLabelPrintWindow() {
   return target;
 }
 
-async function printLabelImages(urls, settings, target) {
-  if (!target || target.closed) throw new Error("The label print preview was closed. Please try again.");
-  const url = URL.createObjectURL(createLabelPdf(urls, settings).output("blob"));
-  target.location.replace(url);
-  setTimeout(() => URL.revokeObjectURL(url), 600000);
-}
-
 export async function outputFamilyLabels({ family, api, action, printWindow, onProgress = () => {} }) {
   onProgress("Loading exhibit labels…");
-  const [config, rows] = await Promise.all([
+  const [config, rows] = await withLabelTimeout(Promise.all([
     api("/api/settings/json/evidence_label"),
     Promise.all(family.members.map(async member => ({ ...await api(`/api/${member.source === "progress" ? "in-progress" : "cases"}/${member.id}`), source: member.source }))),
-  ]);
+  ]), "Loading the case labels timed out. Check CyberLab is running and try again.");
   if (!rows.length) throw new Error("This case has no evidence items.");
   const settings = normalizeLabelSettings(config.value);
   const container = document.createElement("div");
@@ -210,7 +203,7 @@ export async function outputFamilyLabels({ family, api, action, printWindow, onP
       const bytes = Uint8Array.from(atob(url.split(",")[1]), char => char.charCodeAt(0));
       files[`${String(index + 1).padStart(3, "0")}-evidence-${safeFilename(item.row.case_number)}.png`] = bytes;
     }
-    if (action === "print") await printLabelImages(urls, settings, printWindow);
+    if (action === "print") await openPreparedLabelPdf(urls, settings, printWindow, api);
     else {
       const url = URL.createObjectURL(new Blob([zipSync(files, { level: 0 })], { type: "application/zip" }));
       downloadUrl(url, `evidence-labels-${safeFilename(family.base_case_number)}.zip`);
@@ -227,9 +220,9 @@ export function FamilyLabelActions({ family, api }) {
     let printWindow;
     try {
       if (action === "print") printWindow = openLabelPrintWindow();
-      setMessage(await outputFamilyLabels({ family, api, action, printWindow, onProgress: setMessage }));
+      setMessage(await outputFamilyLabels({ family, api, action, printWindow, onProgress: message => { setMessage(message); printWindowStatus(printWindow, message); } }));
     }
-    catch (error) { printWindow?.close(); setMessage(`Label output failed: ${error.message}`); }
+    catch (error) { printWindowStatus(printWindow, `Could not prepare the labels: ${error.message}`); setMessage(`Label output failed: ${error.message}`); }
     finally { setBusy(false); }
   }
   return <section aria-label="Case label output"><div className="form-actions">

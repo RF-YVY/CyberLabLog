@@ -19,7 +19,7 @@ from datetime import datetime, time as datetime_time, timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -87,7 +87,7 @@ RUNTIME_STARTED_AT = time.monotonic()
 LAST_BROWSER_HEARTBEAT = 0.0
 SHUTDOWN_REQUESTED = False
 BROWSER_SESSIONS = BrowserSessions()
-APP_VERSION = "3.0.16"
+APP_VERSION = "3.0.17"
 GITHUB_REPO = "RF-YVY/CyberLabLog"
 UPDATE_CACHE_TTL_SECONDS = 900
 UPDATE_CACHE: dict[str, Any] = {"checked_at": 0.0, "value": None}
@@ -733,6 +733,34 @@ class EvidenceLabelPayload(BaseModel):
     values: dict[str, str]
     extra: list[dict[str, str]] = []
     barcode: str = ""
+
+
+class LabelPrintPayload(BaseModel):
+    images: list[str]
+    width: float
+    height: float
+
+
+@app.post("/api/evidence-labels/print-pdf")
+def prepare_label_print_pdf(payload: LabelPrintPayload, request: Request) -> dict[str, str]:
+    from label_printing import create_print_pdf
+    try:
+        token = create_print_pdf(payload.images, payload.width, payload.height)
+        return {"url": str(request.url_for("read_label_print_pdf", token=token))}
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/evidence-labels/print-pdf/{token}.pdf")
+def read_label_print_pdf(token: str, download: bool = False) -> FileResponse:
+    from label_printing import preview_path
+    try:
+        path = preview_path(token)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Label PDF not found") from exc
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Label PDF expired; click Print Label to prepare it again")
+    return FileResponse(path, media_type="application/pdf", filename="Evidence Labels.pdf", content_disposition_type="attachment" if download else "inline", headers={"Cache-Control": "private, no-store"})
 
 
 @app.put("/api/{source}/{case_id}/evidence-label")

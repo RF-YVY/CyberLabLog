@@ -53,6 +53,12 @@ def check_release(executable, version):
             completed = api(f"/api/in-progress/{row['id']}/complete", method="POST")
             assert completed["case_number"] == row["case_number"]
             assert json.loads(completed["evidence_label"]) == label
+            image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC"
+            preview = api("/api/evidence-labels/print-pdf", {"images": [image, image], "width": 4, "height": 2.3125})
+            with urlopen(preview["url"], timeout=15) as response:
+                assert response.headers.get_content_type() == "application/pdf"
+                assert response.headers["Content-Disposition"].startswith("inline;")
+                assert response.read(5) == b"%PDF-"
             result = api("/api/native-exports/run", {"value": {"output_dir": str(root / "reports"), "report_types": ["map_html"], "map_settings": {"include_completed": True, "include_in_progress": True}}})
             report = next(item for item in result["files"] if item["name"] == "areas_served_map.html")
             content = Path(report["path"]).read_text(encoding="utf-8")
@@ -60,7 +66,7 @@ def check_release(executable, version):
             assert "tile.openstreetmap.org" not in content
             with urlopen(base + "/api/reports/map?" + urlencode({"path": report["path"]}), timeout=30) as response:
                 assert "Custom county map" in response.read().decode()
-            print(f"PASS: Windows EXE {version}; isolated data; saved labels; completion; bundled county map; report viewer")
+            print(f"PASS: Windows EXE {version}; isolated data; saved labels; HTTP label PDF; completion; bundled county map; report viewer")
         finally:
             if ready:
                 try:

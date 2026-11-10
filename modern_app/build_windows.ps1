@@ -71,6 +71,7 @@ try {
         "--hidden-import", "exports",
         "--hidden-import", "native_exports",
         "--hidden-import", "report_basemap",
+        "--hidden-import", "label_printing",
         "--hidden-import", "cyberlab_workflow",
         "--hidden-import", "family_report",
         "--hidden-import", "custom_report",
