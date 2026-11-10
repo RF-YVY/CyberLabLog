@@ -15,9 +15,11 @@ Evidence labels and calmer report maps, with portable and installer downloads.
 ## Downloads
 
 - **CyberLab-Case-Tracker-v3.0.16.exe:** portable application. Replace the old EXE in your current application folder; keep the existing database and app_data beside it.
-- **CyberLab-Case-Tracker-Setup-v3.0.16.exe:** optional per-user installer. Its default location is `%LOCALAPPDATA%\Programs\CyberLab Case Tracker`. Select your existing writable application folder to use existing data, or import your previous database/assets from Settings after installation.
+- **Case-Tracker-Setup-v3.0.16.exe:** optional per-user installer. Its default location is `%LOCALAPPDATA%\Programs\CyberLab Case Tracker`. Select your existing writable application folder to use existing data, or import your previous database/assets from Settings after installation.
 - Matching `.sha256` files verify each download.
 
 Existing users can update through **Settings → Portable Application Update → Check → Download & Install**. Regenerate older maps to use the new county style. No user databases, uploaded branding, or report outputs are included in the release downloads.
 
 Validation: 56 backend tests and 11 frontend tests pass. Browser checks verified per-exhibit label persistence, fresh labels for the next exhibit, multi-exhibit PNG downloads and PDF preparation, and the custom county map. The packaged Windows EXE passed isolated startup, saved-label, completion, offline county-map export, and report-viewer checks. The per-user installer installed an identical executable, and uninstall preserved a test case database and app_data. The packaged archive includes county geometry and no user databases. SHA-256 checksums accompany both downloads.
+
+The installer download is named without the CyberLab prefix so versions with the older portable updater cannot mistake it for the application EXE. The build produces CyberLab-Case-Tracker-Setup-v3.0.16.exe; release packaging renames that file without changing its contents.
