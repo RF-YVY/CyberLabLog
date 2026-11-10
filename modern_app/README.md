@@ -1,12 +1,12 @@
 # CyberLab Modernization
 
-Current release: **v3.0.15** (October 26, 2026).
+Current release: **v3.0.16** (November 10, 2026).
 
 Coordinate handling rejects zero/zero, partial, non-finite, and out-of-range pairs as unresolved, while accepting a valid pair containing a single zero. Refresh Missing Locations repairs invalid case pairs using a valid cache or sibling record before requesting a geocoder lookup; invalid caches are retried. Writes match snapshot coordinates to preserve concurrent manual edits. A database backup precedes the refresh operation. Form serialization preserves null/empty GPS fields.
 
 Case workspace actions use direct completed/in-progress record endpoints. Browser pages register per-page sessions; pagehide releases only that page, and the backend waits 15 seconds before exiting when no pages reconnect. Instance tokens prevent stale-page close signals from terminating a restarted app. Explicit updater shutdown remains immediate.
 
-Map exports embed Leaflet and public-domain Natural Earth country/U.S. state boundaries for standalone viewing. They request no street tiles from `file://`, which lacks the HTTP referrer required by OSM's tile policy. **Open Map Report** in the Reports output list serves a newly rendered snapshot over HTTP for street detail, with a geographic fallback on tile failure. Older report snapshots are supported; arbitrary scripts in report files are not executed by this viewer.
+Map reports default to a custom county map: soft land/water colors, thin Census county boundaries, muted county names, selected city names, and case markers. Generation and viewing work offline without an API key. Labels avoid overlaps with each other and markers; zoom reveals additional labels, and hover shows full county names. Reports → Output Options offers an optional USGS detail layer, fetched only when selected and cached under `app_data/map_backgrounds`. Even reports containing USGS imagery open on the calmer county map; switch backgrounds through Layers. Zooming enlarges saved USGS imagery instead of requesting additional tiles. **Open Map Report** preserves the saved case snapshot and optional background. Map reports never request OSM tiles. Arbitrary scripts in report files are not executed by the report viewer.
 
 Packaged Windows builds support **Settings → Portable Application Update → Check → Download & Install**. The update is verified with GitHub's SHA-256 digest and exact asset size before a database backup and independent Windows helper replace the EXE and restart it. The helper clears inherited PyInstaller extraction variables, retries locked-file replacement, keeps `.exe.previous` for recovery, and logs to `app_data/update-install.log`. Failed downloads leave the running app intact and can be retried. A source checkout supports download-only updates.
 
@@ -46,6 +46,47 @@ existing report and graph export behavior.
 
 ## Case and evidence workflow
 
+Settings → Evidence Label Settings stores a separate agency title, division,
+logo, and label stock. The default Dymo 550 shipping-label preset is 4 inches
+wide × 2 5/16 inches high (landscape). Custom size remains available, with
+independent width and height in inches. In either completed or
+in-progress case details, Generate Evidence Barcode opens an editable label
+preview. Case number, agency, start date, device type, model, investigation
+subject, and description (falling back to case notes) are filled from the case.
+EXHIBIT is populated from the final numeric evidence suffix (CC-26-1234-2 → 2)
+and remains editable. Add serial number, location, or extra named fields as needed. Blank
+fields are omitted. Labels follow the reference layout: a QR code at the upper
+left beside centered agency and division titles, a thin divider, a prominent
+EXHIBIT row, bold field names on the left, and the logo centered on the right.
+The QR code defaults to the case number and can be edited to include an exhibit
+identifier. Label edits are saved separately from the case's other fields. The preview uses the actual
+configured paper width and height; narrow windows can scroll horizontally.
+Agency and division titles each stay on one line and shrink to fit. Field text
+shrinks within the fixed label bounds. If it cannot fit at a readable size,
+printing and downloading are blocked until text is shortened or fields removed.
+Print Label opens an exact-size PDF with a full-page label image and no headers,
+footers, or page margins. Use the PDF viewer's Print button, matching paper size,
+and Actual size / 100% scale. Printing uses one flattened label image per page to
+prevent field rows from splitting across pages. Download PNG uses fixed pixel
+dimensions at 300 pixels per inch (1200 × 694 for the Dymo preset, rounded).
+Neither output grows taller as more fields are added.
+
+New Case also provides Generate Evidence Barcode before an exhibit is submitted.
+Save Label keeps its fields, extra fields, and QR value in the entry draft;
+Save & Finish or Save & Add Next Evidence Item stores them with that exhibit.
+Printing and downloading also save the label. The next evidence item starts
+with a fresh label. Saved labels remain attached when an in-progress exhibit is
+completed, while duplicated exhibits start without the original label data.
+Reopen an exhibit's generator to edit its saved label. Agency/division branding,
+logo, and paper size continue to use current shared label settings.
+
+Case workspaces and case details provide Print All Labels and Download All PNGs
+for every completed and in-progress exhibit in the same case family. Bulk output
+loads the latest saved labels, falling back to case data for exhibits without a
+label, and saves those defaults. It checks every label for overflow before
+starting output. Printing puts each label on its own page; downloading creates
+one ZIP containing an individually named PNG for each exhibit.
+
 The Cases page opens to Case workspaces. Select a base case number to view all
 its completed and in-progress evidence items, or use the Cases tab for the
 completed-item table. Each workspace supports viewing, editing, and preparing
@@ -65,6 +106,12 @@ remembered per browser. Select Lab Light or Lab Dark in Settings for the refined
 professional themes.
 
 Run frontend regression checks with `npm test` from `frontend/`.
+
+Build the portable Windows EXE with `modern_app/build_windows.ps1`. Add
+`-Installer` to also compile the per-user installer using Inno Setup 6 or 7.
+Installer sources are in `modern_app/installer.iss`; neither package includes
+user databases, uploaded images, or generated reports. Installation targets a
+writable per-user folder so the existing portable storage/update behavior works.
 
 ## Development commands
 

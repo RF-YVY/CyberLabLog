@@ -1,5 +1,6 @@
 param(
-    [switch]$Debug
+    [switch]$Debug,
+    [switch]$Installer
 )
 
 $ErrorActionPreference = "Stop"
@@ -69,6 +70,7 @@ try {
         "--hidden-import", "legacy_import",
         "--hidden-import", "exports",
         "--hidden-import", "native_exports",
+        "--hidden-import", "report_basemap",
         "--hidden-import", "cyberlab_workflow",
         "--hidden-import", "family_report",
         "--hidden-import", "custom_report",
@@ -127,3 +129,16 @@ else {
 }
 Write-Host ""
 Write-Host "Place caselog_gui_v6.db and app_data beside the EXE, or import them from Settings."
+
+if ($Installer) {
+    if ($Debug) { throw "Build a windowed executable for the installer, without -Debug." }
+    $CompilerCandidates = @(
+        (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6/ISCC.exe"),
+        (Join-Path $env:ProgramFiles "Inno Setup 6/ISCC.exe"),
+        (Join-Path $env:ProgramFiles "Inno Setup 7/ISCC.exe")
+    )
+    $InnoCompiler = $CompilerCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if (-not $InnoCompiler) { throw "Install Inno Setup to build the optional Windows installer." }
+    & $InnoCompiler "/DAppVersion=$AppVersion" (Join-Path $AppRoot "installer.iss")
+    if ($LASTEXITCODE -ne 0) { throw "Installer build failed" }
+}

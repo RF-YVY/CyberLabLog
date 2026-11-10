@@ -16,6 +16,13 @@ import update_installer
 
 
 class UpdateTests(unittest.TestCase):
+    def test_portable_updater_ignores_installer_assets(self):
+        with patch.object(main, "_github_json", return_value={"tag_name": "v3.0.16", "assets": [
+            {"name": "CyberLab-Case-Tracker-Setup-v3.0.16.exe"},
+            {"name": "CyberLab-Case-Tracker-v3.0.16.exe", "size": 100},
+        ]}):
+            self.assertEqual(main._latest_release_asset()["name"], "CyberLab-Case-Tracker-v3.0.16.exe")
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)

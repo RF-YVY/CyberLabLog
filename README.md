@@ -6,7 +6,15 @@ Download the EXE from Releases, place it in a folder on your PC, and create a de
 
 ![CyberLab Case Tracker modern browser UI](docs/images/cyberlab-modern-browser-ui.png)
 
-## Current Release: v3.0.15
+## Current Release: v3.0.16
+
+Evidence labels are available from New Case and completed/in-progress case details, with saved per-exhibit fields, agency/division branding, a right-side logo, QR codes, and exhibit numbers inferred from case suffixes. Labels use fixed dimensions: Dymo 550 shipping labels (4 × 2 5/16 inches) by default, or a custom size. Print single or all case labels through exact-size PDFs with no headers/footers or page margins; download individual PNGs or one ZIP with a separate PNG per exhibit.
+
+Report maps now default to a calmer custom county map with soft colors, thin Census county boundaries, county names, selected city names, and collision-aware labels. Generation and viewing work offline without an API key. An optional embedded USGS detail layer can be included during report generation. The in-app map is unchanged.
+
+Releases provide both a portable EXE and a per-user installer. The installer requires no administrator privileges and places the application in a writable folder; case databases and app_data remain local and are retained when uninstalling. The in-app updater continues to download the portable application EXE.
+
+### Previous release improvements
 
 **Refresh Missing Locations** now retries named locations with `0,0`, repairs affected completed and in-progress records, and ignores invalid cached coordinate pairs. Valid cached coordinates can immediately restore markers; existing precise coordinates are preserved. A database backup is saved before refresh repairs. Editing cases with blank GPS fields no longer converts those fields to `0,0` or overwrites valid geocache entries.
 
@@ -67,7 +75,7 @@ Graph exports include a landscape vector PDF with every category across readable
 ## Migration Update
 
 - **Modern browser UI:** The app now launches a local browser interface backed by the packaged CyberLab runtime.
-- **No installer required:** The release asset is a single EXE for admin-free deployment.
+- **Deployment choices:** Use the portable EXE or the optional per-user installer; neither requires administrator privileges.
 - **Legacy data compatible:** Existing `caselog_gui_v6.db` and `app_data` can be placed beside the EXE or imported from Settings.
 - **Safety backups:** Import and restore workflows create backups before replacing active data.
 - **Report continuity:** Native exports support PDF, XLSX, CSV, graph PNG/CSV, map HTML, and map JSON output.

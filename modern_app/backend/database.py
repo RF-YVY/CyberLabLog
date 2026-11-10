@@ -33,6 +33,7 @@ CASE_COLUMNS = [
     "fpr_complete",
     "notes",
     "custom_fields",
+    "evidence_label",
     "created_at",
 ]
 
@@ -59,6 +60,7 @@ CASE_WRITE_COLUMNS = [
     "fpr_complete",
     "notes",
     "custom_fields",
+    "evidence_label",
 ]
 
 IN_PROGRESS_COLUMNS = [
@@ -283,6 +285,7 @@ def ensure_schema() -> None:
             try:
                 existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
                 migrations = {
+                    "evidence_label": "TEXT",
                     "custom_fields": "TEXT",
                     "investigation_subject": "TEXT",
                     "location_name": "TEXT",
@@ -432,6 +435,12 @@ def list_in_progress(
 def _normalize_case_payload(payload: dict[str, Any], in_progress: bool = False) -> dict[str, Any]:
     allowed = IN_PROGRESS_WRITE_COLUMNS if in_progress else CASE_WRITE_COLUMNS
     data = {key: payload.get(key) for key in allowed}
+    label = data.get("evidence_label")
+    if isinstance(label, str):
+        label = json.loads(label) if label else None
+    if label is not None and not isinstance(label, dict):
+        raise ValueError("Evidence label must be an object")
+    data["evidence_label"] = json.dumps(label) if label is not None else None
     for key in ("case_number", "examiner", "investigator", "investigation_subject", "agency", "city_of_offense", "state_of_offense", "location_name", "offense_type", "device_type", "model", "os", "forensic_tool", "notes", "priority", "workflow_status"):
         if key in data and data[key] is not None:
             data[key] = str(data[key]).strip()
@@ -545,6 +554,8 @@ def update_case(case_id: int, payload: dict[str, Any], in_progress: bool = False
     ensure_schema()
     table = "in_progress_cases" if in_progress else "case_log"
     data = _normalize_case_payload(payload, in_progress=in_progress)
+    if payload.get("evidence_label") is None:
+        data.pop("evidence_label", None)
     assignments = ", ".join([f"{key} = ?" for key in data])
     with connect() as conn:
         _ensure_case_number_available(conn, table, data.get("case_number"), exclude_id=case_id)
@@ -589,7 +600,18 @@ def duplicate_case(case_id: int, in_progress: bool = False) -> dict[str, Any]:
         source["case_number"] = _generate_unique_case_number(conn, table, source.get("case_number"))
     source.pop("id", None)
     source.pop("created_at", None)
+    source.pop("evidence_label", None)
     return create_case(source, in_progress=in_progress)
+
+
+def save_evidence_label(case_id: int, value: dict[str, Any], in_progress: bool = False) -> dict[str, Any]:
+    ensure_schema()
+    table = "in_progress_cases" if in_progress else "case_log"
+    with connect() as conn:
+        cursor = conn.execute(f"UPDATE {table} SET evidence_label = ? WHERE id = ?", (json.dumps(value), case_id))
+        if cursor.rowcount == 0:
+            raise ValueError(f"Case not found: {case_id}")
+    return {"saved": True, "evidence_label": value}
 
 
 def _top_counts(conn: sqlite3.Connection, table: str, column: str, limit: int = 8) -> list[dict[str, Any]]:

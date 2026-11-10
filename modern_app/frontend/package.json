@@ -1,7 +1,7 @@
 {
   "name": "cyberlab-modern-ui",
   "private": true,
-  "version": "3.0.15",
+  "version": "3.0.16",
   "type": "module",
   "scripts": {
     "test": "node --test src/caseExperience.test.js",
@@ -11,8 +11,12 @@
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",
+    "fflate": "^0.8.3",
+    "html-to-image": "^1.11.13",
+    "jspdf": "^4.2.1",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.468.0",
+    "qrcode": "^1.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-leaflet": "^5.0.0",

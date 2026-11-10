@@ -3,6 +3,7 @@ export function nextEvidenceForm(form, caseNumber) {
   return {
     ...shared,
     case_number: caseNumber,
+    evidence_label: null,
     device_type: "",
     model: "",
     os: "",

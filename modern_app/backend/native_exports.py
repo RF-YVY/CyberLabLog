@@ -6,6 +6,7 @@ import html
 import json
 import textwrap
 from coordinates import coordinate_pair
+from report_basemap import fetch_background, valid_background, county_features
 from collections import Counter
 from datetime import datetime, timedelta
 from functools import lru_cache
@@ -523,7 +524,9 @@ def _write_graph_pdf(output_dir: Path, graph_type: str, safe_name: str, graph_ro
 
 
 def _write_map_html(path: Path, points: list[dict[str, Any]], map_settings: dict[str, Any] | None = None) -> dict[str, Any]:
-    path.write_text(_map_html_content(points, map_settings), encoding="utf-8")
+    settings = dict(map_settings or {})
+    settings["background"] = fetch_background(points) if settings.get("include_usgs_background", False) else valid_background(settings.get("background"))
+    path.write_text(_map_html_content(points, settings), encoding="utf-8")
     return _file_info(path)
 
 
@@ -539,6 +542,8 @@ def _map_assets() -> dict[str, str]:
 def _map_html_content(points: list[dict[str, Any]], map_settings: dict[str, Any] | None = None) -> str:
     settings = map_settings or {}
     assets = _map_assets()
+    background = valid_background(settings.get("background"))
+    counties_json = json.dumps(county_features(points, background), separators=(",", ":")).replace("</", "<\\/")
     geocoded = [point for point in points if point.get("latitude") is not None and point.get("longitude") is not None]
     missing = [point for point in points if point.get("latitude") is None or point.get("longitude") is None]
     center = [geocoded[0]["latitude"], geocoded[0]["longitude"]] if geocoded else [32.7, -89.5]
@@ -553,6 +558,7 @@ def _map_html_content(points: list[dict[str, Any]], map_settings: dict[str, Any]
         "center": center,
         "includeCaseDetails": settings.get("include_case_details", True),
         "markerIcon": marker_data_url,
+        "background": background,
     }).replace("</", "<\\/")
     rows = "\n".join(
         "<tr>"
@@ -582,8 +588,14 @@ def _map_html_content(points: list[dict[str, Any]], map_settings: dict[str, Any]
     .muted {{ color: #9ab5cd; }}
     .metrics {{ display: flex; gap: 10px; flex-wrap: wrap; }}
     .metric {{ padding: 8px 12px; border: 1px solid #2e5e86; border-radius: 999px; background: #081a2c; }}
-    #map {{ height: min(72vh, 760px); min-height: 520px; background: #e2eff5; }}
+    #map {{ height: min(72vh, 760px); min-height: 520px; background: #e5f0f3; }}
     .map-status {{ padding: 10px 18px; background: #0a2035; color: #c3d9e8; }}
+    .county-name-marker {{ background: transparent; border: 0; }}
+    .county-name-marker span {{ display: block; position: absolute; transform: translate(-50%, -50%); white-space: nowrap; color: #757a78; font-size: 10px; font-style: italic; font-weight: 500; text-shadow: -1px -1px 2px white, 1px 1px 2px white, 0 0 3px white; }}
+    .city-name-marker {{ background: transparent; border: 0; }}
+    .city-name-marker span {{ position: absolute; transform: translateY(-50%); white-space: nowrap; font-size: 10px; font-weight: 700; color: #254e67; text-shadow: -1px -1px 2px white, 1px 1px 2px white, 0 0 3px white; }}
+    .county-label {{ background: transparent; box-shadow: none; border: none; color: #28343c; font-size: 10px; font-weight: 700; text-shadow: -1px -1px 2px white, 1px 1px 2px white, 0 0 3px white; }}
+    .county-label::before {{ display: none; }}
     .region-label {{ background: transparent; box-shadow: none; border: none; color: #425b69; font-size: 11px; text-shadow: 0 1px white; }}
     main {{ padding: 18px; }}
     table {{ border-collapse: collapse; width: 100%; margin-top: 18px; overflow: hidden; border-radius: 14px; }}
@@ -609,7 +621,7 @@ def _map_html_content(points: list[dict[str, Any]], map_settings: dict[str, Any]
       <div class="metric">{len(geocoded)} mapped</div>
     </div>
   </header>
-  <div class="map-status" id="map-status" role="status">Geographic overview: country and U.S. state boundaries, with case locations. Street detail is available when opened from CyberLab's report viewer.</div>
+  <div class="map-status" id="map-status" role="status">Embedded report map with county boundaries, county names, and case locations. No internet connection is needed to view saved map content.</div>
   <div id="map"></div>
   <main>
     <div class="muted">Locations without geocache coordinates are listed in the table and can be mapped after the app geocache is updated.</div>
@@ -626,43 +638,69 @@ def _map_html_content(points: list[dict[str, Any]], map_settings: dict[str, Any]
     const webReport = ['http:', 'https:'].includes(location.protocol);
     const map = L.map('map', {{ scrollWheelZoom: true }}).setView(exportData.center, exportData.points.length ? (webReport ? 7 : 6) : 5);
     const countries = L.geoJSON({assets['ne_110m_admin_0_countries.geojson']}, {{
-      style: {{ color: '#879da8', weight: 1, fillColor: '#f7f7ed', fillOpacity: 1 }},
+      style: {{ color: '#b7c3c8', weight: 0.8, fillColor: '#f4f2eb', fillOpacity: 1 }},
       onEachFeature: (feature, layer) => layer.bindTooltip(escapeText(feature.properties.name))
     }});
     const states = L.geoJSON({assets['ne_110m_admin_1_states_provinces.geojson']}, {{
-      style: {{ color: '#8b9dac', weight: 1, fillOpacity: 0 }},
-      onEachFeature: (feature, layer) => layer.bindTooltip(escapeText(feature.properties.name), {{ permanent: true, direction: 'center', className: 'region-label' }})
+      style: {{ color: '#8d9e9f', weight: 1.5, fillOpacity: 0 }},
+      onEachFeature: (feature, layer) => layer.bindTooltip(escapeText(feature.properties.name), {{ direction: 'center', className: 'region-label' }})
     }});
     const overview = L.layerGroup([countries, states]).addTo(map);
     map.attributionControl.addAttribution('<a href="https://www.naturalearthdata.com/">Natural Earth</a> overview boundaries');
     L.control.scale().addTo(map);
-    // Local files cannot send the HTTP referrer required by OSM's tile policy.
-    // Never request OSM tiles from file:// or other non-web origins.
-    if (['http:', 'https:'].includes(location.protocol)) {{
-      const streets = L.tileLayer('https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
-        maxZoom: 19,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    const calmStatus = 'Custom county map: soft land and water colors, county boundaries, and selected location names. Works offline without an API key. Zoom in for more labels; hover over a county for its full name.';
+    document.getElementById('map-status').textContent = calmStatus;
+    const baseLayers = {{ 'Custom county map': overview }};
+    if (exportData.background?.image) {{
+      const graphic = L.imageOverlay(exportData.background.image, exportData.background.bounds, {{ attribution: escapeText(exportData.background.attribution) }});
+      baseLayers['USGS topographic map (optional)'] = graphic;
+    }}
+    const countyData = {counties_json};
+    const countyLines = L.geoJSON(countyData, {{
+      style: feature => ({{ color: '#b1b9b5', weight: 0.8, opacity: 0.9, fillColor: ['#f3f1e9', '#edf1eb', '#f1eee7', '#edf0ee'][Number(feature.properties.geoid.slice(0, 2)) % 4], fillOpacity: 1 }}),
+      onEachFeature: (feature, layer) => layer.bindTooltip(escapeText(feature.properties.name), {{ direction: 'center', className: 'county-label' }})
+    }});
+    const countyLabels = L.layerGroup();
+    const counties = L.layerGroup([countyLines, countyLabels]).addTo(map);
+    function updateCountyLabels() {{
+      countyLabels.clearLayers();
+      if (map.getZoom() < 6) return;
+      const size = map.getSize(), occupied = [];
+      const overlaps = box => occupied.some(other => box[0] < other[2] && box[2] > other[0] && box[1] < other[3] && box[3] > other[1]);
+      const mappedPoints = exportData.points.filter(point => point.latitude !== null && point.longitude !== null).sort((a,b) => Number(b.case_count) - Number(a.case_count));
+      mappedPoints.forEach(point => {{
+        const pixel = map.latLngToContainerPoint([point.latitude, point.longitude]);
+        occupied.push([pixel.x - 9, pixel.y - 9, pixel.x + 9, pixel.y + 9]);
       }});
-      streets.on('tileerror', () => {{
-        if (!map.hasLayer(streets)) return;
-        map.removeLayer(streets);
-        overview.addTo(map);
-        map.setZoom(Math.min(map.getZoom(), 6));
-        document.getElementById('map-status').textContent = 'Street tiles are unavailable. Showing the built-in geographic overview; case locations and details remain available.';
+      mappedPoints.forEach(point => {{
+        const pixel = map.latLngToContainerPoint([point.latitude, point.longitude]);
+        const box = [pixel.x + 12, pixel.y - 8, pixel.x + 17 + String(point.city).length * 6, pixel.y + 8];
+        if (box[0] < 0 || box[1] < 0 || box[2] > size.x || box[3] > size.y || overlaps(box)) return;
+        occupied.push(box);
+        L.marker([point.latitude, point.longitude], {{ interactive: false, keyboard: false, icon: L.divIcon({{ className: 'city-name-marker', html: '<span style="left:12px">' + escapeText(point.city) + '</span>', iconSize: [0,0] }}) }}).addTo(countyLabels);
       }});
-      map.removeLayer(overview);
-      streets.addTo(map);
-      document.getElementById('map-status').textContent = 'Street map requires internet access. Geographic overview is also available in the layer selector.';
-      L.control.layers({{ 'Street map (online)': streets, 'Geographic overview': overview }}).addTo(map);
-      map.on('baselayerchange', (event) => {{
-        if (event.layer === overview) {{
-          map.setZoom(Math.min(map.getZoom(), 6));
-          document.getElementById('map-status').textContent = 'Geographic overview: country and U.S. state boundaries. Select Street map for online street detail.';
-        }} else {{
-          document.getElementById('map-status').textContent = 'Street map requires internet access. Geographic overview is also available in the layer selector.';
-        }}
+      const candidates = countyData.features.map(feature => {{
+        const point = map.latLngToContainerPoint(feature.properties.label);
+        const name = feature.properties.name.replace(/ County$| Parish$| Borough$| Census Area$/g, '');
+        return {{ feature, point, name, distance: Math.hypot(point.x - size.x / 2, point.y - size.y / 2) }};
+      }}).sort((a, b) => a.distance - b.distance);
+      candidates.forEach(({{ feature, point, name }}) => {{
+        const half = name.length * 3.1 + 5;
+        const box = [point.x - half, point.y - 8, point.x + half, point.y + 8];
+        if (box[0] < 0 || box[1] < 0 || box[2] > size.x || box[3] > size.y) return;
+        if (overlaps(box)) return;
+        occupied.push(box);
+        L.marker(feature.properties.label, {{ interactive: false, keyboard: false, icon: L.divIcon({{ className: 'county-name-marker', html: '<span>' + escapeText(name) + '</span>', iconSize: [0, 0] }}) }}).addTo(countyLabels);
       }});
     }}
+    map.on('zoomend moveend resize', updateCountyLabels);
+    map.attributionControl.addAttribution('County boundaries: U.S. Census Bureau, 2025 (generalized)');
+    L.control.layers(baseLayers, {{ 'County lines and names': counties }}).addTo(map);
+    map.on('baselayerchange', event => {{
+      const custom = event.layer === overview;
+      countyLines.setStyle({{ fillOpacity: custom ? 1 : 0 }});
+      document.getElementById('map-status').textContent = custom ? calmStatus : 'Optional embedded USGS detail. Select Custom county map for a calmer background.';
+    }});
     const bounds = [];
     const markerSizeForZoom = (zoom) => {{
       const level = Number(zoom || 6);
@@ -719,8 +757,9 @@ def _map_html_content(points: list[dict[str, Any]], map_settings: dict[str, Any]
       }});
     map.on('zoomend', () => activeMarkers.forEach(([marker, point]) => marker.setIcon(buildIcon(point))));
     if (bounds.length > 1) {{
-      map.fitBounds(bounds, {{ padding: [38, 38], maxZoom: webReport ? 18 : 6 }});
+      map.fitBounds(bounds, {{ padding: [38, 38], maxZoom: 10 }});
     }}
+    updateCountyLabels();
     if ({len(missing)} > 0) {{
       const missingControl = L.control({{ position: 'bottomleft' }});
       missingControl.onAdd = function() {{

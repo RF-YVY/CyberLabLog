@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { startBrowserSession } from "./browserSession.js";
 import { numberOrNull } from "./caseValidation.js";
 import { nextEvidenceForm } from "./evidenceEntry";
+import { EvidenceLabelSettings, EvidenceLabelGenerator, FamilyLabelActions } from "./EvidenceLabel.jsx";
 import { validateCase, StatusBadge, ListControls, useListPreferences, IntakeItems, CaseWorkspace } from "./caseExperience";
 import {
   Activity,
@@ -74,6 +75,7 @@ const blankCase = {
   fpr_complete: false,
   notes: "",
   custom_fields: {},
+  evidence_label: null,
   priority: "Medium",
   target_due_date: "",
   workflow_status: "Intake",
@@ -243,6 +245,7 @@ const defaultReportConfig = {
     include_completed: true,
     include_in_progress: true,
     include_case_details: true,
+    include_usgs_background: false,
     include_data_file: false,
   },
   data_exports: {
@@ -509,6 +512,7 @@ function CaseForm({
   setForm,
   onSubmit,
   mode,
+  api,
   busy,
   onCancelEdit,
   draft,
@@ -520,6 +524,7 @@ function CaseForm({
   uiCustomization = defaultUiCustomization,
 }) {
   const isEditing = Boolean(form.id);
+  const [showLabel, setShowLabel] = useState(false);
   const [nextDestination, setNextDestination] = useState(form._destination || mode);
   useEffect(() => { if (form._destination) setNextDestination(form._destination); }, [form._destination]);
   const label = (key, fallback) => fieldLabel(uiCustomization, key, fallback);
@@ -607,6 +612,8 @@ function CaseForm({
         {renderField("data_recovered", "Data Recovered", { options: ["", "Yes", "No"] })}
       </div>
       <div className="form-actions">
+        <button className="ghost-action" type="button" disabled={busy || !form.case_number?.trim()} onClick={() => setShowLabel(true)}>Generate Evidence Barcode</button>
+        {showLabel && <EvidenceLabelGenerator row={{ ...form, _mode: mode, investigation_subject: investigationSubjectValue(form, uiCustomization) }} api={api} onClose={() => setShowLabel(false)} onSaved={data => setForm(current => ({ ...current, evidence_label: data }))} />}
         {!isEditing && (
           <>
             <label className="next-evidence-destination">
@@ -1061,14 +1068,14 @@ function App() {
 
   function applyCaseTemplate(template, mode) {
     const setForm = mode === "progress" ? setProgressForm : setCaseForm;
-    setForm((current) => ({ ...current, ...(template?.payload || {}), id: current.id, case_number: current.case_number }));
+    setForm((current) => ({ ...current, ...(template?.payload || {}), id: current.id, case_number: current.case_number, evidence_label: current.evidence_label }));
     setStatus(`Applied template: ${template.name}`);
   }
 
   async function saveCaseTemplate(form) {
     const name = window.prompt("Template name");
     if (!name?.trim()) return;
-    const excluded = new Set(["id", "case_number", "start_date", "end_date", "volume_size_gb", "notes", "created_at", "updated_at"]);
+    const excluded = new Set(["id", "case_number", "start_date", "end_date", "volume_size_gb", "notes", "created_at", "updated_at", "evidence_label"]);
     const payload = Object.fromEntries(Object.entries(form).filter(([key, value]) => !excluded.has(key) && value !== "" && value !== false));
     try {
       await api("/api/templates", {
@@ -2079,6 +2086,7 @@ function App() {
               {savedDrafts.completed && !hasDraftContent(caseForm) && <DraftRecoveryBanner draft={savedDrafts.completed} onRestore={() => restoreDraft("completed")} onDiscard={() => discardDraft("completed")} />}
               <CaseTemplateBar templates={caseTemplates} form={caseForm} onApply={(template) => applyCaseTemplate(template, "completed")} onSave={() => saveCaseTemplate(caseForm)} onDelete={removeCaseTemplate} />
               <CaseForm
+                api={api}
                 form={caseForm}
                 setForm={setCaseForm}
                 onSubmit={(event) => saveCase(event, "completed")}
@@ -2107,6 +2115,7 @@ function App() {
                   </div>
                   <CaseTemplateBar templates={caseTemplates} form={progressForm} onApply={(template) => applyCaseTemplate(template, "progress")} onSave={() => saveCaseTemplate(progressForm)} onDelete={removeCaseTemplate} />
                   <CaseForm
+                    api={api}
                     form={progressForm}
                     setForm={setProgressForm}
                     onSubmit={(event) => saveCase(event, "progress")}
@@ -2274,6 +2283,7 @@ function App() {
                   <label><input type="checkbox" checked={Boolean(reportConfig.graph_settings?.include_csv)} onChange={(event) => updateNestedReportConfig("graph_settings", "include_csv", event.target.checked)} /> Graph CSV</label>
                   <label><input type="checkbox" checked={Boolean(reportConfig.map_settings?.include_data_file)} onChange={(event) => updateNestedReportConfig("map_settings", "include_data_file", event.target.checked)} /> Map data files</label>
                   <label><input type="checkbox" checked={Boolean(reportConfig.map_settings?.include_case_details)} onChange={(event) => updateNestedReportConfig("map_settings", "include_case_details", event.target.checked)} /> Map case details</label>
+                  <label><input type="checkbox" checked={Boolean(reportConfig.map_settings?.include_usgs_background)} onChange={(event) => updateNestedReportConfig("map_settings", "include_usgs_background", event.target.checked)} /> Include optional USGS detail layer (internet needed during generation)</label>
                 </div>
                 <div className="settings-checks">
                   <strong className="settings-checks-title">Raw Data Files</strong>
@@ -2414,6 +2424,7 @@ function App() {
           {activeTab === "settings" && (
             <section className="content-pad settings-grid">
               <div className="settings-column">
+                <EvidenceLabelSettings api={api} />
                 <h2><Settings size={18} /> Appearance</h2>
                 <form className="profile-card" onSubmit={saveAppProfile}>
                   <h3>Application Profile</h3>
@@ -2720,7 +2731,7 @@ function App() {
           )}
         </section>
       </section>
-      {workspace && <CaseWorkspace family={workspace} error={workspaceError} onClose={() => setWorkspace(null)} onEdit={(row) => openFamilyItem(row, true)} onView={(row) => openFamilyItem(row, false)} onNext={(row) => { setWorkspace(null); startNextSubcase(row, row.source || "completed"); }} busy={busy} />}
+      {workspace && <CaseWorkspace api={api} family={workspace} error={workspaceError} onClose={() => setWorkspace(null)} onEdit={(row) => openFamilyItem(row, true)} onView={(row) => openFamilyItem(row, false)} onNext={(row) => { setWorkspace(null); startNextSubcase(row, row.source || "completed"); }} busy={busy} />}
       {pendingNavigation && <div className="modal-backdrop"><section className="case-modal leave-entry-dialog" role="dialog" aria-modal="true" aria-labelledby="leave-entry-title"><h2 id="leave-entry-title">Keep this unfinished entry?</h2><p>This entry has not been submitted. Its draft will be kept so you can return to it.</p><div className="form-actions"><button className="primary-action" autoFocus onClick={() => setPendingNavigation(null)}>Continue entering</button><button className="ghost-action" onClick={() => { setActiveTabRaw(pendingNavigation); setPendingNavigation(null); }}>Keep draft &amp; leave</button></div></section></div>}
       {selectedCase && (
         <CaseDetailModal
@@ -2732,6 +2743,7 @@ function App() {
           api={api}
           onNextSubcase={() => startNextSubcase(selectedCase, selectedCase._mode === "progress" ? "progress" : "completed")}
           onChanged={refresh}
+          onLabelSaved={data => setSelectedCase(current => ({ ...current, evidence_label: data }))}
         />
       )}
       {reportPreview && <ReportPreviewModal url={reportPreview} onClose={() => setReportPreview("")} />}
@@ -2863,7 +2875,8 @@ function ReportPreviewModal({ url, onClose }) {
   );
 }
 
-function CaseDetailModal({ row, onClose, onEdit, onDuplicate, onNextSubcase, onChanged, api, uiCustomization = defaultUiCustomization }) {
+function CaseDetailModal({ row, onClose, onEdit, onDuplicate, onNextSubcase, onChanged, onLabelSaved, api, uiCustomization = defaultUiCustomization }) {
+  const [showLabel, setShowLabel] = useState(false);
   const [detailTab, setDetailTab] = useState("overview");
   const [evidence, setEvidence] = useState([]);
   const [audit, setAudit] = useState([]);
@@ -2950,6 +2963,9 @@ function CaseDetailModal({ row, onClose, onEdit, onDuplicate, onNextSubcase, onC
           </div>
           <button className="icon-button" onClick={onClose} title="Close"><X size={18} /></button>
         </header>
+        <button className="primary-action inline" onClick={() => setShowLabel(true)}>Generate Evidence Barcode</button>
+        {showLabel && <EvidenceLabelGenerator row={{ ...row, investigation_subject: investigationSubjectValue(row, uiCustomization) }} api={api} onClose={() => setShowLabel(false)} onSaved={onLabelSaved} />}
+        <FamilyLabelActions family={family} api={api} />
         <div className="modal-tabs segmented-control">
           <button className={detailTab === "overview" ? "active" : ""} onClick={() => setDetailTab("overview")}>Overview</button>
           <button className={detailTab === "evidence" ? "active" : ""} onClick={() => setDetailTab("evidence")}>Evidence <span>{evidence.length}</span></button>

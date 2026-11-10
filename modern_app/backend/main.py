@@ -87,7 +87,7 @@ RUNTIME_STARTED_AT = time.monotonic()
 LAST_BROWSER_HEARTBEAT = 0.0
 SHUTDOWN_REQUESTED = False
 BROWSER_SESSIONS = BrowserSessions()
-APP_VERSION = "3.0.15"
+APP_VERSION = "3.0.16"
 GITHUB_REPO = "RF-YVY/CyberLabLog"
 UPDATE_CACHE_TTL_SECONDS = 900
 UPDATE_CACHE: dict[str, Any] = {"checked_at": 0.0, "value": None}
@@ -240,6 +240,7 @@ class EncryptedRestoreRequest(BaseModel):
 
 
 class CasePayload(BaseModel):
+    evidence_label: dict[str, Any] | str | None = None
     case_number: str | None = None
     examiner: str | None = None
     investigator: str | None = None
@@ -349,6 +350,7 @@ def _latest_release_asset() -> dict[str, Any]:
             for asset in assets
             if str(asset.get("name") or "").lower().endswith(".exe")
             and "cyberlab" in str(asset.get("name") or "").lower()
+            and not any(word in str(asset.get("name") or "").lower() for word in ("setup", "installer"))
         ),
         None,
     )
@@ -725,6 +727,25 @@ def read_completed_case(case_id: int) -> dict[str, Any]:
     if row is None:
         raise HTTPException(status_code=404, detail="Completed evidence item no longer exists. Refresh the case list.")
     return row
+
+
+class EvidenceLabelPayload(BaseModel):
+    values: dict[str, str]
+    extra: list[dict[str, str]] = []
+    barcode: str = ""
+
+
+@app.put("/api/{source}/{case_id}/evidence-label")
+def write_evidence_label(source: str, case_id: int, payload: EvidenceLabelPayload) -> dict[str, Any]:
+    from database import save_evidence_label
+    if source not in {"cases", "in-progress"}:
+        raise HTTPException(status_code=404, detail="Unknown case source")
+    try:
+        result = save_evidence_label(case_id, payload.model_dump(), in_progress=source == "in-progress")
+        record_audit("case", case_id, "label_saved", payload.values.get("case"), "Evidence label saved")
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/api/in-progress/{case_id}")
@@ -1498,6 +1519,7 @@ def view_exported_map(path: str) -> HTMLResponse:
         rendered = _map_html_content(data["points"], {
             "include_case_details": data.get("includeCaseDetails", True),
             "marker_icon_data": data.get("markerIcon", ""),
+            "background": data.get("background", {}),
         })
         return HTMLResponse(rendered, headers={"Referrer-Policy": "strict-origin-when-cross-origin"})
     except (OSError, ValueError, TypeError, KeyError) as exc:

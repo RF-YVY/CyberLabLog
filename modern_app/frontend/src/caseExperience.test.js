@@ -2,6 +2,70 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { nextEvidenceForm } from "./evidenceEntry.js";
 import { validateCase, numberOrNull } from "./caseValidation.js";
+import { labelFromCase, savedLabelFromCase, visibleLabelFields, normalizeLabelSettings } from "./evidenceLabel.js";
+import { createLabelPdf } from "./labelPdf.js";
+
+test("print PDFs have one exact-size, full-page image per label with no added text", () => {
+  const image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC";
+  for (const settings of [{ width: 4, height: 2.3125 }, { width: 2, height: 5 }]) {
+    const pdf = createLabelPdf([image, image], settings);
+    assert.equal(pdf.getNumberOfPages(), 2);
+    for (let page = 1; page <= 2; page++) {
+      pdf.setPage(page);
+      assert.ok(Math.abs(pdf.internal.pageSize.getWidth() - settings.width) < 0.0001);
+      assert.ok(Math.abs(pdf.internal.pageSize.getHeight() - settings.height) < 0.0001);
+    }
+    const content = pdf.internal.pages.slice(1).map(page => page.join("\n")).join("\n");
+    assert.equal((content.match(/\/I0 Do/g) || []).length, 2);
+    assert.equal(content.includes("Tj"), false);
+  }
+});
+
+test("saved exhibit labels restore extra fields, QR values, and deliberately blank fields", () => {
+  const label = { values: { serial: "SN-123", description: "" }, extra: [{ label: "Shelf", value: "B2" }], barcode: "custom-qr" };
+  const restored = savedLabelFromCase({ case_number: "CC-26-1234-1", notes: "Do not restore these notes", evidence_label: JSON.stringify(label) });
+  assert.equal(restored.values.exhibit, "1");
+  assert.equal(restored.values.serial, "SN-123");
+  assert.equal(restored.values.description, "");
+  assert.deepEqual(restored.extra, label.extra);
+  assert.equal(restored.barcode, "custom-qr");
+  assert.equal(nextEvidenceForm({ evidence_label: label }, "CC-26-1234-2").evidence_label, null);
+});
+
+test("label stock defaults to Dymo shipping labels and preserves explicit custom sizes", () => {
+  assert.deepEqual([normalizeLabelSettings().width, normalizeLabelSettings().height], [4, 2.3125]);
+  assert.equal(normalizeLabelSettings({ width: 6, height: 4 }).height, 2.3125);
+  const custom = normalizeLabelSettings({ paper: "custom", width: "6", height: "4", agency: "Agency", logo: "image" });
+  assert.deepEqual([custom.width, custom.height, custom.agency, custom.logo], [6, 4, "Agency", "image"]);
+  assert.equal(normalizeLabelSettings({ paper: "custom", width: -1, height: Infinity }).width, 4);
+});
+
+test("exhibit is inferred from an evidence suffix without treating the base case number as an exhibit", () => {
+  assert.equal(labelFromCase({ case_number: "CC-26-1234-1" }).exhibit, "1");
+  assert.equal(labelFromCase({ case_number: "CC-26-1234-2" }).exhibit, "2");
+  assert.equal(labelFromCase({ case_number: "CC-26-1234" }).exhibit, "");
+  assert.equal(labelFromCase({ case_number: "CC-26-1234-A" }).exhibit, "");
+  assert.equal(labelFromCase({ case_number: "CC-26-1234", evidence_number: "7" }).exhibit, "7");
+});
+
+test("evidence labels populate case data without mutating the case", () => {
+  const row = Object.freeze({ case_number: "26-101-A", start_date: "2026-11-10", agency: "Agency", device_type: "Phone", model: "Model", notes: "Device description", investigation_subject: "Subject" });
+  const label = labelFromCase(row);
+  assert.equal(label.case, "26-101-A");
+  assert.equal(label.date, "2026-11-10");
+  assert.equal(label.type, "Phone");
+  assert.equal(label.brand, "Model");
+  assert.equal(label.description, "Device description");
+  assert.equal(label.subject, "Subject");
+  label.case = "Edited label";
+  assert.equal(row.case_number, "26-101-A");
+});
+
+test("blank label fields disappear completely, including empty custom fields", () => {
+  const fields = visibleLabelFields({ case: "26-101", serial: "  ", exhibit: "" }, [{ label: "Custodian", value: "Alex" }, { label: "Blank", value: " " }, { label: "", value: "Hidden" }]);
+  assert.deepEqual(fields, [{ label: "Case", value: "26-101" }, { label: "Custodian", value: "Alex" }]);
+  assert.deepEqual(visibleLabelFields(labelFromCase()), []);
+});
 
 test("editing an unresolved location keeps null coordinates instead of creating Null Island", () => {
   for (const value of [null, undefined, "", "   "]) assert.equal(numberOrNull(value), null);

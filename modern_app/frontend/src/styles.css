@@ -2689,3 +2689,6 @@ tbody tr:hover {
 :root:is([data-theme="signal-dark"], [data-theme="day-shift"]) :is(.nav-button, .ghost-action, .icon-button, .table-action) { box-shadow: none; border-radius: 8px; }
 :root:is([data-theme="signal-dark"], [data-theme="day-shift"]) :is(.field input, .field select, .field textarea) { border-radius: 8px; box-shadow: none; background: var(--card); }
 :root:is([data-theme="signal-dark"], [data-theme="day-shift"]) th { text-transform: none; background: var(--panel-2); }
+.evidence-label-overlay { z-index: 10000; }
+.evidence-label-dialog { width: min(920px, 96vw); max-height: 92vh; overflow-y: auto; }
+.label-settings-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
