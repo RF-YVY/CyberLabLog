@@ -1,4 +1,4 @@
-export const labelFields = [["exhibit", "EXHIBIT"], ["case", "Case"], ["date", "Date"], ["type", "Type"], ["brand", "Brand/Model"], ["serial", "S/N"], ["location", "Location"], ["description", "Description"], ["agency", "Agency"], ["subject", "Investigation Subject"]];
+export const labelFields = [["exhibit", "EXHIBIT"], ["case", "Case"], ["date", "Date"], ["type", "Type"], ["brand", "Brand/Model"], ["serial", "S/N"], ["location", "Location"], ["description", "Description"], ["agency", "Agency"], ["subject", "Involved Person"]];
 
 export function normalizeLabelSettings(value = {}) {
   const base = { agency: "", division: "", logo: "", ...value };

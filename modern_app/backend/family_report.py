@@ -108,8 +108,6 @@ def generate_case_family_pdf(case_number: str, target: Path) -> Path:
                 section.append(Paragraph(f"<b>{_text(item.get('evidence_number') or 'Unnumbered')}</b> - {_text(item.get('item_type'))}; serial {_text(item.get('serial_number'))}; status {_text(item.get('status'))}; storage {_text(item.get('storage_location'))}", styles["Small"]))
                 for event in item.get("custody_events") or []:
                     section.append(Paragraph(f"{_text(event.get('event_at'))}: <b>{_text(event.get('event_type'))}</b> - {_text(event.get('person'))}, {_text(event.get('location'))}", styles["Custody"]))
-        else:
-            section.append(Paragraph("No evidence inventory recorded for this device.", styles["Small"]))
         story.append(KeepTogether(section))
 
     doc.build(story)

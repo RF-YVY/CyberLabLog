@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.20] - 2026-11-13
+- Omit empty evidence inventory messages from case-family PDFs while retaining recorded evidence and custody details.
+- Use Involved Person in evidence label forms and output instead of Suspect.
+
 ## [3.0.15] - 2026-10-26
 - Fixed blank GPS fields being converted to zero when saving edited cases, which could poison city geocache entries.
 - Made Refresh Missing Locations retry zero/zero and invalid cache entries and persist repaired coordinates in completed and in-progress records.

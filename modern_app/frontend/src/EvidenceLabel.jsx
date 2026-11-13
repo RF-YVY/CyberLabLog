@@ -144,7 +144,7 @@ function EvidenceLabelFace({ labelRef, values, extra, settings, qrImage }) {
         {qrImage && <img className="label-qr" src={qrImage} alt="Evidence QR code" />}
         <div className="label-titles">{settings.agency.trim() && <strong>{settings.agency}</strong>}{settings.division.trim() && <div>{settings.division}</div>}</div>
       </div>}
-      <div className="label-content"><dl>{visibleLabelFields(values, extra).map((item, index) => <div className={item.label === "EXHIBIT" ? "label-exhibit" : ""} key={index}><dt>{({ "Brand/Model": "Brand", Location: "Loc", Description: "Desc", "Investigation Subject": "Suspect" })[item.label] || item.label}:</dt><dd>{item.value}</dd></div>)}</dl>{settings.logo && <img className="label-logo" src={settings.logo} alt="Agency logo" />}</div>
+      <div className="label-content"><dl>{visibleLabelFields(values, extra).map((item, index) => <div className={item.label === "EXHIBIT" ? "label-exhibit" : ""} key={index}><dt>{({ "Brand/Model": "Brand", Location: "Loc", Description: "Desc" })[item.label] || item.label}:</dt><dd>{item.value}</dd></div>)}</dl>{settings.logo && <img className="label-logo" src={settings.logo} alt="Agency logo" />}</div>
     </div>);
 }
 
