@@ -1,237 +1,264 @@
 # CyberLab Case Tracker
 
-CyberLab Case Tracker is a digital forensic case log, reporting, mapping, and analytics tool for labs and agencies. The current release introduces a modern browser-based interface while preserving compatibility with the legacy `caselog_gui_v6.db` database and `app_data` folder.
+A local case management, reporting, mapping, and analytics application for digital forensics labs and agencies. Track cases and evidence, maintain custody records, and produce reports through a browser interface backed by a local Python service.
 
-Download the EXE from Releases, place it in a folder on your PC, and create a desktop shortcut if desired. The application stores the database and `app_data` beside the EXE, which keeps deployment friendly for managed PCs that do not allow normal installers.
+The modern application remains compatible with the legacy `caselog_gui_v6.db` database and `app_data` folder.
+
+**[Download for Windows](https://github.com/RF-YVY/CyberLabLog/releases)** · **[Full feature list](#full-feature-list)** · **[Development guide](modern_app/README.md)**
 
 ![CyberLab Case Tracker modern browser UI](docs/images/cyberlab-modern-browser-ui.png)
 
-## Current Release: v3.0.19
+## Contents
 
-v3.0.19 prevents label-edge clipping by fitting the complete image inside the printer hardware margins. EXHIBIT defaults to the numeric evidence suffix, or 1 for an unsuffixed case; previously saved blank exhibits recover automatically.
+- [Getting started](#getting-started)
+- [Full feature list](#full-feature-list)
+- [Screenshots](#screenshots)
+- [Updating and migrating](#updating-and-migrating)
+- [Data storage and privacy](#data-storage-and-privacy)
+- [Excel import reference](#excel-import-reference)
+- [Running from source](#running-from-source)
+- [Support](#support)
+- [License and credits](#license-and-credits)
 
-### v3.0.18 improvements
+## Getting started
 
-v3.0.18 adds direct Windows label printing. Select your printer in Evidence Label Settings, the label generator, or case-wide output. Dymo labels rotate to match the short-edge print head and long-edge feed direction; the driver stock size is selected explicitly to avoid browser scaling. PDF previews remain separate alternatives.
+### Windows release
 
-### v3.0.17 improvements
+Download a package from [GitHub Releases](https://github.com/RF-YVY/CyberLabLog/releases). Choose either:
 
-v3.0.17 fixes label print previews stuck on Preparing PDF in some office browsers. PDFs are now created inside CyberLab and served through a normal local address, with open/download fallback links and preparation timeouts. Fixed label dimensions and header/footer-free printing are preserved.
+| Package | Setup |
+| --- | --- |
+| Portable EXE | Place the EXE in a writable folder and launch it. Create a desktop shortcut if desired. |
+| Per-user installer | Run the installer to place the application in a writable user folder. Administrator privileges are not required. |
 
-### v3.0.16 improvements
+The packaged application includes its runtime; a separate Python or Node.js installation is not required. The database and `app_data` folder are stored beside the application EXE. The installer retains these files when uninstalling.
 
-Evidence labels are available from New Case and completed/in-progress case details, with saved per-exhibit fields, agency/division branding, a right-side logo, QR codes, and exhibit numbers inferred from case suffixes. Labels use fixed dimensions: Dymo 550 shipping labels (4 × 2 5/16 inches) by default, or a custom size. Print single or all case labels through exact-size PDFs with no headers/footers or page margins; download individual PNGs or one ZIP with a separate PNG per exhibit.
+### First use
 
-Report maps now default to a calmer custom county map with soft colors, thin Census county boundaries, county names, selected city names, and collision-aware labels. Generation and viewing work offline without an API key. An optional embedded USGS detail layer can be included during report generation. The in-app map is unchanged.
+1. Launch CyberLab Case Tracker. The application opens in your browser.
+2. Use **Settings** to configure agency branding, preferences, and any legacy data imports.
+3. Open **New Case**, enter shared case information and device details, and choose **Completed** or **In-Progress**.
+4. Select **Save & Finish**, or **Save & Add Next Evidence Item** to continue the same case with the next evidence suffix.
+5. Use **Cases**, **Map**, **Graphs**, and **Reports** to review records and generate outputs.
 
-Releases provide both a portable EXE and a per-user installer. The installer requires no administrator privileges and places the application in a writable folder; case databases and app_data remain local and are retained when uninstalling. The in-app updater continues to download the portable application EXE.
+## Full feature list
 
-### Previous release improvements
+| Area | Capabilities |
+| --- | --- |
+| Case management | Shared case workspaces, completed and in-progress records, search, filters, and consecutive evidence intake |
+| Evidence and custody | Evidence inventories, custody timelines, case history, and case-family reports |
+| Evidence labels | Saved exhibit labels, QR codes, agency branding, Windows printing, and PDF/PNG output |
+| Mapping | Location lookup, precise coordinates, location repair, and standalone offline map reports |
+| Analytics and reporting | Workload summaries, turnaround metrics, charts, and multiple export formats |
+| Automation | Scheduled reports with catch-up handling after sleep or missed polling times |
+| Personalization | Themes, backgrounds, branding, configurable fields, tabs, and tables |
+| Data and deployment | Local storage, encrypted portable backups, legacy migration, portable deployment, and in-app updates |
 
-**Refresh Missing Locations** now retries named locations with `0,0`, repairs affected completed and in-progress records, and ignores invalid cached coordinate pairs. Valid cached coordinates can immediately restore markers; existing precise coordinates are preserved. A database backup is saved before refresh repairs. Editing cases with blank GPS fields no longer converts those fields to `0,0` or overwrites valid geocache entries.
+### Case management and intake
 
-Case workspace View, Edit, and next-evidence actions now fetch the exact record instead of searching a capped result list. Page reloads and navigation no longer immediately stop the local server; the app waits 15 seconds after the last app page closes, canceling shutdown when a page reconnects. Evidence-opening failures appear inside the workspace.
+- **Unified case workspaces:** Group completed and in-progress evidence under a base case number, with actions to view, edit, and prepare the next evidence item.
+- **Detailed case records:** Capture examiner, investigator, investigation subject, agency, location, offense, device type, model, operating system, forensic tools, processed volume, recovery results, FPR status, and notes.
+- **Flexible submission:** Save new records directly to **Completed** or **In-Progress**, and complete active cases after saving final edits.
+- **Consecutive evidence entry:** Use **Save & Add Next Evidence Item** to retain shared information, clear device details and results, and suggest the next available evidence suffix across both case lists.
+- **Search and organization:** Browse, search, filter, sort, view, edit, duplicate, and delete case records. Agency and offense sorting supports case-insensitive alphabetical ordering.
+- **Active workload views:** Focus on due, overdue, awaiting-evidence, ready-to-close, and assigned work.
+- **Draft recovery:** Recover autosaved intake drafts, review saved-item summaries, and receive warnings before leaving unfinished entries.
+- **Entry assistance:** Use reusable templates, inline field validation, alphabetized dropdowns, and visible save confirmations.
+- **Data review:** Open affected records, normalize inconsistent values, and merge duplicate records through review actions.
 
-Map HTML exports now include a built-in geographic overview and their own Leaflet assets, so local files remain viewable without internet or blocked tile requests. For street detail, use **Open Map Report** in the Reports output list while CyberLab is running. The viewer can open earlier exported maps too, and falls back to the geographic overview if street tiles fail. Regenerate older HTML files to add standalone support. The in-app Map remains available as before.
+### Evidence inventory and chain of custody
 
-From **Settings → Portable Application Update**, choose **Check**, then **Download & Install**. The Windows EXE verifies GitHub's SHA-256 digest, backs up the database, closes, replaces itself, and reopens. It keeps the prior executable as `.exe.previous` and records the result in `app_data/update-install.log`. Cases, settings, and uploaded images remain in place. **Download EXE only** remains available for manual deployment. Versions through v3.0.11 support downloading only; install v3.0.12 once to gain the in-app installation action.
+- **Evidence inventories:** Maintain evidence details within each case.
+- **Custody timelines:** Record chain-of-custody events alongside the related evidence.
+- **Case history:** Review recorded changes and activity.
+- **Case families:** Link numbered device sub-cases and combine their evidence, custody history, volume totals, and individual results in a family PDF.
 
-In **Settings → Appearance**, themes are grouped into Everyday Lab, Ambient Operations Hub, High-Contrast Command Center, Modular Dashboard, Kinetic Laboratory, Geometric Console, and Classic Consoles. New choices include Frosted Lab, Bento Pop, Bento Mint, Aurora Lab, Citrus Circuit, and Coral Console. Aurora motion respects the Interface Animations switch and reduced-motion preferences.
+### Evidence labels and printing
 
-Use **Custom Background** to load a PNG, JPG, or WebP image (up to 20 MB). **Show Custom Background** hides or shows the saved image without deleting it, and its setting persists across launches. Replacing an image turns it on. The image is stored locally in `app_data/custom_background.png`, included in portable backups, and fills the window with centered cropping. Themes retain their panel and table colors for readability; glass themes expose more of the image.
+- **Label generation:** Create labels from **New Case** or completed and in-progress case details.
+- **Saved exhibit details:** Retain per-exhibit label fields, serial numbers, locations, extra named fields, and editable QR values.
+- **Automatic exhibit numbering:** Infer the exhibit number from the numeric evidence suffix, or use **1** for an unsuffixed case.
+- **Agency branding:** Configure agency and division titles with a separate label logo.
+- **Label dimensions:** Use the default Dymo 550 shipping-label size of **4 × 2 5/16 inches**, or specify custom dimensions.
+- **Direct Windows printing:** Select a default or per-job label printer. Labels are rotated for Dymo feed orientation and fitted within the printer's hardware margins.
+- **PDF previews:** Open exact-size PDFs through a local address, with open/download fallbacks.
+- **Image downloads:** Download individual label PNGs at 300 pixels per inch.
+- **Case-wide output:** Print every label in a case family or download a ZIP containing one PNG per exhibit.
+- **Layout checks:** Detect text overflow before output so fields can be shortened or removed.
 
-Graph exports include a landscape vector PDF with every category across readable pages (up to 20 entries per page, fewer for wrapped labels). Pages share the same axis scale. The PNG is a labeled top-20 overview when the full chart would be crowded; CSV exports retain all values. Enable **Graph PNG overview + full PDF** in report settings to generate both visual formats.
+Configure defaults in **Settings → Evidence Label Settings**. When printing a PDF, match the paper size and use **Actual size / 100%** scaling. Check alignment on the target printer.
 
-- Opens the Cases page to **Case workspaces**, grouping Completed and In-Progress evidence under one base case number.
-- Separates shared case information from device details during intake.
-- Adds **Save & Add Next Evidence Item** and **Save & Finish**, with a Completed/In-Progress destination selector.
-- Carries shared information forward, clears device details and results, and suggests the next evidence suffix across both case lists.
-- Shows saved evidence items with quick editing, visible draft-save feedback, and an unfinished-entry warning.
-- Remembers table columns and comfortable/compact row spacing, adds inline field validation, and keeps save confirmations visible during refresh.
-- Refines the **Lab Light** and **Lab Dark** themes while retaining the other theme choices.
+### Mapping and location management
 
-### Features retained from earlier releases
+- **Flexible locations:** Map city/state entries, named landmarks, offshore sites, and exact latitude/longitude coordinates.
+- **Automatic lookup:** Geocode new and edited locations and cache successful results for reuse.
+- **Location repair:** Use **Refresh Missing Locations** to recheck completed and in-progress records, retry invalid coordinates, and report unresolved locations. A database backup precedes repairs; valid precise coordinates are preserved.
+- **Interactive maps:** Choose a map focus and use custom transparent map markers.
+- **Offline map reports:** Export standalone HTML maps with embedded map assets and a county basemap that works without an API key.
+- **Geographic context:** Display county boundaries, county names, selected city names, and case markers with labels that avoid overlaps.
+- **Optional imagery:** Fetch and embed a USGS detail layer during report generation for later viewing.
+- **Saved report viewer:** Open exported case snapshots through **Reports → Open Map Report**.
+- **Map data exports:** Export geographic data as JSON for additional analysis.
 
-- Automatically geocodes new and edited case locations so new cities appear on the map.
-- Adds specific landmark and exact latitude/longitude support for islands, offshore sites, and other locations without postal addresses.
-- Adds **Refresh Missing Locations** to scan completed and in-progress existing cases, cache successful coordinates, and report unresolved locations.
-- Removes the interactive map's previous 80-location cap and carries precise landmark coordinates into native map exports.
+### Analytics, reports, and exports
 
-- Populates the Cases pane Investigation Subject column from the existing "Subject Name of Investigation" case field.
-- Makes legacy custom-field subject values searchable and preserves them when editing older cases.
-- Prevents duplicate subject inputs when the compatibility field already exists.
+- **Category analysis:** Review offenses, agencies, device types, examiners, investigators, cities, states, forensic tools, and volume totals.
+- **Workload reports:** Summarize devices, device types, and processed volume for a date range and selected examiner, investigator, or agency.
+- **Turnaround metrics:** Include average turnaround time in date-scoped and all-time PDF summaries.
+- **Case-family reports:** Produce combined PDFs containing device summaries, evidence inventories, custody history, results, and total volume.
+- **Document and data formats:** Export PDF, XLSX, CSV, and JSON outputs.
+- **Graph exports:** Create PNG overviews, graph CSV files, and paginated vector PDFs with readable labels and a shared axis scale.
+- **Complete category coverage:** Enable **Graph PNG overview + full PDF** to pair a compact overview with a PDF containing every category; CSV exports retain all values.
+- **Map exports:** Generate standalone HTML reports and map JSON files.
+- **Readable PDF layouts:** Wrap long content and paginate detail tables and chart categories.
 
-- Adds average turnaround time to date-scoped and all-time PDF report summaries.
-- Adds Investigation Subject to case entry, case lists, detail views, persistence, and search.
-- Fixes Agency and Offense alphabetical sorting and adds case-insensitive A-Z and Z-A choices.
-- Alphabetizes case-entry dropdown values consistently without regard to capitalization.
-- Improves PDF detail-table wrapping and section pagination for long agency and offense content.
+### Scheduled reporting
 
-- Supports both Completed and In-Progress submissions directly from New Case.
-- Replaces the In Progress entry form with a searchable, filterable table of active cases and their workflow details.
-- Adds a **Completed** action while editing an in-progress case, saving final edits before moving it to completed cases.
+- **Automated exports:** Generate report, graph, and map outputs while the application is open.
+- **Schedule controls:** Save the weekly day, time, and enabled state explicitly.
+- **Catch-up handling:** Resume scheduled work after Windows sleep, wake, or missed polling times, with duplicate-run protection.
+- **On-demand startup:** Open the application without automatically generating report files during startup.
 
-- Adds scheduler catch-up after Windows sleep, wake, or a missed polling minute, while retaining duplicate-run protection.
-- Adds a nearby Save Schedule control so weekly day, time, and enabled state are explicitly persisted.
-- Adds a persistent master switch for logo, pane-border, highlight, and interface animations.
+### Appearance and workspace customization
 
-- Adds custom workload reports filtered by date range and Examiner, Investigator, or Agency, with local PDF and CSV export.
-- Adds case-family PDFs combining every related device, volume totals, evidence inventory, custody history, and individual results.
-- Adds evidence inventory, chain-of-custody timelines, reusable case templates, case history, and automatic next-device numbering.
-- Makes review items actionable by opening affected cases, normalizing inconsistent values, and merging duplicate records.
-- Adds autosaved case drafts and focused active-case views for due, overdue, awaiting-evidence, ready-to-close, and assigned work.
-- Adds password-protected portable backups containing the database and application assets with integrity verification during restore.
-- Adds Soft Relief Dark and improves fixed glass backgrounds, Electric Azure bloom, and Violet Flow animation.
-- Retains all-time and date-scoped automated PDF, graph, map, XLSX, CSV, and JSON exports without generating files during startup.
+- **Theme selection:** Choose light, dark, glass, high-contrast, and other theme styles, including **Lab Light** and **Lab Dark**.
+- **Custom backgrounds:** Load a PNG, JPG, or WebP image up to 20 MB and show or hide it without deleting the saved image.
+- **Animation preferences:** Control interface animations, with reduced-motion support for animated themes.
+- **Agency identity:** Customize the application header title, report logo, and map marker.
+- **Tabs and fields:** Rename or hide tabs and fields, add custom informational tabs, and create user-defined case fields.
+- **Table preferences:** Retain selected columns and comfortable or compact row spacing per browser.
+- **Browser choice:** Select the system default browser, Chrome, Edge, or automatic detection.
 
-## Migration Update
+### Backups, migration, and deployment
 
-- **Modern browser UI:** The app now launches a local browser interface backed by the packaged CyberLab runtime.
-- **Deployment choices:** Use the portable EXE or the optional per-user installer; neither requires administrator privileges.
-- **Legacy data compatible:** Existing `caselog_gui_v6.db` and `app_data` can be placed beside the EXE or imported from Settings.
-- **Safety backups:** Import and restore workflows create backups before replacing active data.
-- **Report continuity:** Native exports support PDF, XLSX, CSV, graph PNG/CSV, map HTML, and map JSON output.
-- **Automated reports:** Scheduled exports can run while the app is open.
-- **Update checking:** The header can show an update badge when a newer GitHub release is available.
-- **Browser preference:** Users can choose system default browser, Chrome, Edge, or auto-detect.
+- **Local storage:** Keep case records in the local SQLite database and preferences and assets in `app_data`.
+- **Database backups:** Create backups from **Settings** and before supported data replacement or repair operations.
+- **Encrypted portable backups:** Protect database and application assets with a password, including integrity verification during restore.
+- **Legacy migration:** Reuse the existing `caselog_gui_v6.db` and `app_data` beside the EXE, or import a legacy database and zipped application assets from **Settings**.
+- **Support bundles:** Generate diagnostic bundles from **Settings**.
+- **Portable Windows application:** Run the packaged EXE from a writable folder without a separate Python or Node.js installation.
+- **Per-user installer:** Install without administrator privileges and retain local case data when uninstalling.
+- **In-app updates:** Check for releases, verify downloads, back up the database, replace the executable, and restart while retaining cases, settings, and images.
+- **Update recovery:** Retain the previous executable and an installation log; download the EXE separately for manual deployment when needed.
 
-## Updating From an Older Version
+## Screenshots
 
-1. Back up your current application folder as good practice.
+Additional application screenshots:
+
+![CyberLab Case Tracker screenshot 1](https://github.com/user-attachments/assets/a2e67522-42d9-4975-9d7a-85f0b579b4ec)
+
+![CyberLab Case Tracker screenshot 2](https://github.com/user-attachments/assets/115cef22-3966-4b95-bef6-a95480fddc4f)
+
+![CyberLab Case Tracker screenshot 3](https://github.com/user-attachments/assets/538a85f3-8eef-4fa0-a420-418cf6b599f4)
+
+![CyberLab Case Tracker screenshot 4](https://github.com/user-attachments/assets/b9b63681-cca2-44e3-b646-079ab1104ca5)
+
+![CyberLab Case Tracker screenshot 5](https://github.com/user-attachments/assets/aead7596-9ebc-4ecf-9814-4b515b32b131)
+
+![CyberLab Case Tracker screenshot 6](https://github.com/user-attachments/assets/6c4fe01a-a5cc-4e17-afb9-55cedafef894)
+
+## Updating and migrating
+
+### In-app updates
+
+In a packaged Windows release, open **Settings → Portable Application Update**, select **Check**, then **Download & Install**.
+
+The updater verifies the download against GitHub's SHA-256 digest and asset size, backs up the database, replaces the EXE, and restarts the application. It retains the previous executable as `.exe.previous` and writes results to `app_data/update-install.log`. Cases, settings, and uploaded images remain in place.
+
+**Download EXE only** is available for manual deployment. If your installed version does not offer **Download & Install**, update manually to a release that supports it. Source checkouts support download-only updates.
+
+### Manual updates and legacy data
+
+1. Close the application and back up the application folder.
 2. Replace the old EXE with the new release EXE.
-3. Keep `caselog_gui_v6.db` and `app_data` in the same folder so previous cases, logos, map markers, and settings remain available.
-4. Launch the new EXE and confirm the header shows the expected case totals.
+3. Keep `caselog_gui_v6.db` and `app_data` beside the EXE to retain cases, settings, logos, and map markers.
+4. Launch the application and confirm the expected case totals.
 
-## Features
+You can also import legacy data from **Settings**. Database import and restore workflows create backups before replacing active data.
 
-- **Case Entry:** Add completed or in-progress digital forensic cases with examiner, investigator, investigation subject, agency, city, state, offense, device, volume, notes, FPR status, and recovered-data status.
-- **Workflow Retention:** Save & Add Next Evidence Item preserves shared case information while clearing device details and results. Save & Finish retains common intake defaults for a new case.
-- **Cases View:** Browse, search, sort, view, edit, duplicate, and delete completed cases.
-- **In-Progress View:** Track active cases, edit workflow status, duplicate work items, and complete in-progress cases into the main case log.
-- **Map View:** Visualize city/state or named landmark locations, with optional exact GPS coordinates, selectable map focus, custom transparent map markers, and an on-demand scan that maps uncached locations from existing cases.
-- **Graphs:** Preview analytics by offense type, agency, device type, examiner, investigator, city, state, tools, and volume totals.
-- **Reports:** Export PDF, XLSX, CSV, graph snapshots, map HTML, and map data files from the modern native export engine.
-- **Custom Workload Reports:** Summarize devices, device types, and processed volume for a selected period and Examiner, Investigator, or Agency.
-- **Evidence & Custody:** Maintain evidence inventories and chain-of-custody events inside each case.
-- **Case Families:** Group numbered device sub-cases and export a combined family report.
-- **Customization:** Change themes, app header title, report logo, map marker, tab names, tab visibility, field names, field visibility, and custom informational tabs.
-- **Custom Fields:** Add user-defined case fields that are stored with each case.
-- **Backup & Restore:** Create database backups, encrypted portable backups, verified restores, and support bundles from Settings.
-- **Legacy Import:** Import a legacy database or zipped `app_data` folder from inside the application.
-  
-![Image](https://github.com/user-attachments/assets/a2e67522-42d9-4975-9d7a-85f0b579b4ec)
+## Data storage and privacy
 
-![Image](https://github.com/user-attachments/assets/115cef22-3966-4b95-bef6-a95480fddc4f)
+| Location | Contents |
+| --- | --- |
+| `caselog_gui_v6.db` | Local SQLite case database |
+| `app_data/` | Settings, uploaded images, cached assets, and application data |
+| `app_data/backups/` | Database and portable backups |
+| `app_data/automated_reports/` | Scheduled report outputs |
 
-![Image](https://github.com/user-attachments/assets/538a85f3-8eef-4fa0-a420-418cf6b599f4)
+The live SQLite database is not encrypted by the application. Password-protected portable backups use encryption; they are separate from the active database.
 
-![Image](https://github.com/user-attachments/assets/b9b63681-cca2-44e3-b646-079ab1104ca5)
+Case records remain local. Automatic location lookup sends location text, such as a landmark, city, or state, to OpenStreetMap's Nominatim geocoding service. Enter exact coordinates when a lookup is unnecessary. Online map layers, optional imagery, and update checks also require external requests.
 
-![Image](https://github.com/user-attachments/assets/aead7596-9ebc-4ecf-9814-4b515b32b131)
+When contributing, keep case data, databases, logs, credentials, and generated reports out of version control. Review the repository's [.gitignore](.gitignore) before adding files.
 
-![Image](https://github.com/user-attachments/assets/6c4fe01a-a5cc-4e17-afb9-55cedafef894)
+## Excel import reference
 
-## XLSX Import Format
+The legacy desktop application includes an XLSX case importer. Use an exported workbook as a starting point so column labels match the application configuration. This reference describes the legacy workflow; the modern application's migration options are documented above.
 
-When importing cases from an Excel file, the following column headers are **required** (case-sensitive):
-![Image](https://github.com/user-attachments/assets/d22eb192-711a-4a9d-8c79-5305134a6c75)
+![Excel import column reference](https://github.com/user-attachments/assets/d22eb192-711a-4a9d-8c79-5305134a6c75)
 
-| Column Header | Description | Format/Type |
-|---------------|-------------|-------------|
-| `ID` | Unique identifier | Optional, can be empty |
-| `Case #` | Case number or identifier | Text |
-| `Examiner` | Name of the examiner | Text |
-| `Investigator` | Name of the investigator | Text |
-| `Agency` | Agency or organization name | Text |
-| `City` | City where offense occurred | Text |
-| `State` | State where offense occurred | Text |
-| `Start (MM-DD-YYYY)` | Case start date | MM-DD-YYYY format |
-| `End (MM-DD-YYYY)` | Case end date | MM-DD-YYYY format |
-| `Vol (GB)` | Volume size in gigabytes | Numeric |
-| `Offense` | Type of offense or crime | Text |
-| `Device` | Type of device examined | Text |
+| Column header | Description | Recommended format |
+| --- | --- | --- |
+| `ID` | Record identifier | Generated during import; not mapped from the workbook |
+| `Case #` | Case number | Text |
+| `Examiner` | Examiner name | Text |
+| `Investigator` | Investigator name | Text |
+| `Agency` | Agency or organization | Text |
+| `City` | Case location city | Text |
+| `State` | Case location state | Text |
+| `Start (MM-DD-YYYY)` | Case start date | MM-DD-YYYY |
+| `End (MM-DD-YYYY)` | Case end date | MM-DD-YYYY |
+| `Vol (GB)` | Processed volume in gigabytes | Number |
+| `Offense` | Offense type | Text |
+| `Device` | Device type | Text |
 | `Model` | Device model | Text |
 | `OS` | Operating system | Text |
-| `Recovered?` | Data recovery status | Yes/No |
-| `FPR?` | Full Physical Recovery status | Yes/No |
-| `Notes` | Additional notes or comments | Text |
-| `Created (YYYY-MM-DD)` | Creation date | YYYY-MM-DD format |
+| `Forensic Tool` | Tool used for examination | Text |
+| `Recovered?` | Data recovery status | Yes / No |
+| `FPR?` | FPR completion status | Yes / No |
+| `Notes` | Case notes | Text |
+| `Created (YYYY-MM-DD)` | Record creation date | Generated during import; not mapped from the workbook |
 
-**Important Notes:**
-- All column headers must match exactly (case-sensitive)
-- Missing any required column will cause the import to fail
-- Date formats must be exactly as specified
-- Boolean fields (Recovered?, FPR?) should contain "Yes" or "No"
+The importer matches configured display labels or internal field names without regard to capitalization and trims surrounding header whitespace. It maps recognized columns rather than requiring every column listed above. Use **Yes** or **No** for boolean fields and consistent date formats for predictable results.
 
-## Data Storage
+## Running from source
 
-- All case data is stored locally in an encrypted SQLite database (`caselog_gui_v6.db`).
-- User preferences and settings are stored in the `app_data` directory.
-- Case records remain local. When automatic map lookup is used, only the entered location, city, and state are sent to OpenStreetMap's Nominatim geocoding service; exact coordinates can be entered instead.
+### Modern application
 
-## Requirements
+The current interface uses a FastAPI backend and a React/Vite frontend. Source development requires Python and Node.js/npm compatible with the dependencies in the project manifests. See the [modern application guide](modern_app/README.md) for architecture, development servers, and Windows packaging.
 
-- Python 3.8+
-- [ttkbootstrap](https://ttkbootstrap.readthedocs.io/)
-- [tkintermapview](https://github.com/TomSchimansky/TkinterMapView)
-- [matplotlib](https://matplotlib.org/)
-- [openpyxl](https://openpyxl.readthedocs.io/)
-- [reportlab](https://www.reportlab.com/)
-- [geopy](https://geopy.readthedocs.io/)
+From the repository root, install dependencies and build the interface:
 
-# Download exe from Releases (no setup) or...
-
-## Install dependencies with:
-
-```
-pip install ttkbootstrap tkintermapview matplotlib openpyxl reportlab geopy
+```powershell
+python -m pip install -r modern_app/backend/requirements.txt
+cd modern_app/frontend
+npm install
+npm run build
+cd ../..
+python modern_app/launch_modern_app.py
 ```
 
-## Usage
+The application opens at `http://127.0.0.1:8768`. In development, it uses the repository-root database and `app_data` folder.
 
-1. Run `CyberLabCaseTracker.py` with Python 3.8+:
-   ```
-   python CyberLabCaseTracker.py
-   ```
-2. Use the tabs to add, view, map, and analyze cases.
-3. Access settings to customize the app, import data, or change the theme.
-4. Use the About tab for version info and support.
+### Legacy desktop application
 
-## GitHub Safety & .gitignore
+The original Tkinter interface remains in `CyberLabCaseTracker.py`. Its dependencies are listed in [requirements.txt](requirements.txt); the modern backend has a separate dependency file. See the source imports for any additional legacy dependencies needed for a particular workflow.
 
-- **Do NOT commit user data, database files, logs, or sensitive info.**
-- The provided `.gitignore` excludes all user data, database, logs, and cache files.
-- Only source code, documentation, and static assets should be pushed to GitHub.
-
-## .gitignore Example
-
-```
-# User data and database
-caselog_gui_v6.db
-app_data/
-*.log
-*.sqlite*
-*.db*
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.DS_Store
-.env
-*.xlsx
-*.pdf
-logo.png
-marker_icon.png
+```powershell
+python CyberLabCaseTracker.py
 ```
 
-## Support & Documentation
+## Support
 
-- For help, documentation, or updates, contact your system administrator or the application provider.
-- This tool is designed for internal use by digital forensics labs and law enforcement agencies.
-- Developer: RF-YVY ([GitHub](https://github.com/RF-YVY))
+For deployment assistance, contact your system administrator or application provider.
 
-## License
+- **Developer:** [RF-YVY](https://github.com/RF-YVY)
+- **Downloads and release notes:** [GitHub Releases](https://github.com/RF-YVY/CyberLabLog/releases)
+- **Development documentation:** [Modern application guide](modern_app/README.md)
+- **Earlier changes:** [Changelog](CHANGELOG.md)
 
-This project is intended for internal, non-commercial use. See LICENSE file if provided.
+## License and credits
 
-<a href="https://www.flaticon.com/free-icons/forensics" title="forensics icons">Forensics icons created by Iconjam - Flaticon</a>
+Released under the [MIT License](LICENSE).
+
+[Forensics icons created by Iconjam — Flaticon](https://www.flaticon.com/free-icons/forensics).
